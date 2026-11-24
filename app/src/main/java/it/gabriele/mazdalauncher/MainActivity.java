@@ -33,6 +33,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -95,6 +96,7 @@ public class MainActivity extends Activity {
     private static final int SLOT_NAV = 0, SLOT_MUSIC = 1;
     private static final String MAPS_PKG = "com.google.android.apps.maps";
     private static final int REQ_LOCATION = 1;
+    private static final int REQ_VOICE = 2;
 
     static final class AppEntry {
         final String label;
@@ -287,6 +289,7 @@ public class MainActivity extends Activity {
         });
 
         findViewById(R.id.search).setOnClickListener(v -> askDestination());
+        findViewById(R.id.btn_voice).setOnClickListener(v -> startVoice());
 
         homeText = findViewById(R.id.place_home_text);
         workText = findViewById(R.id.place_work_text);
@@ -405,6 +408,91 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Nessun navigatore installato", Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    // ---------- Assistente vocale ----------
+    /** Usa il riconoscimento vocale di Google (italiano); se manca, prova l'assistente di sistema. */
+    private void startVoice() {
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT")
+                .putExtra(RecognizerIntent.EXTRA_PROMPT, "Dimmi cosa vuoi fare");
+        try {
+            startActivityForResult(i, REQ_VOICE);
+        } catch (ActivityNotFoundException e) {
+            try {
+                startActivity(new Intent(Intent.ACTION_VOICE_COMMAND).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (ActivityNotFoundException e2) {
+                Toast.makeText(this, "Riconoscimento vocale non disponibile", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int result, Intent data) {
+        super.onActivityResult(req, result, data);
+        if (req != REQ_VOICE || result != RESULT_OK || data == null) return;
+        ArrayList<String> r = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+        if (r != null && !r.isEmpty()) handleVoice(r.get(0));
+    }
+
+    private static String after(String text, String... prefixes) {
+        for (String p : prefixes)
+            if (text.startsWith(p + " ")) return text.substring(p.length() + 1).trim();
+        return null;
+    }
+
+    private void handleVoice(String raw) {
+        String t = raw.toLowerCase(Locale.ITALY).trim();
+        String arg;
+
+        if (t.matches(".*\\b(pausa|metti in pausa|stop|ferma)\\b.*")) { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE); return; }
+        if (t.matches(".*\\b(prossim[ao]|successiv[ao]|avanti|salta)\\b.*")) { sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT); return; }
+        if (t.matches(".*\\b(precedente|indietro)\\b.*")) { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS); return; }
+        if (t.matches("(play|riproduci|riprendi|metti la musica|musica|suona)")) { sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY); return; }
+
+        if (t.matches("(naviga |portami |andiamo |vai )?(a |in )?casa")) { goToPlace("home", "Casa"); return; }
+        if (t.matches("(naviga |portami |andiamo |vai )?(a |in |al )?(lavoro|ufficio)")) { goToPlace("work", "Lavoro"); return; }
+
+        arg = after(t, "naviga verso", "naviga a", "naviga in", "naviga", "portami a", "portami in",
+                "portami", "andiamo a", "andiamo in", "vai a", "vai in", "indicazioni per");
+        if (arg != null && !arg.isEmpty()) { navigateTo(arg); return; }
+
+        arg = after(t, "chiama", "telefona a", "telefona");
+        if (arg != null) {
+            String digits = arg.replaceAll("[^0-9+]", "");
+            if (digits.length() >= 3) {
+                startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + digits))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } else {
+                launchSlot(2); // Telefono
+                Toast.makeText(this, "Per chiamare un contatto usa l'app Telefono", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
+        arg = after(t, "apri", "avvia", "lancia");
+        if (arg != null) {
+            AppEntry best = null;
+            for (AppEntry e : apps) {
+                String l = e.label.toLowerCase(Locale.ITALY);
+                if (l.equals(arg)) { best = e; break; }
+                if (best == null && (l.contains(arg) || arg.contains(l))) best = e;
+            }
+            if (best != null) { launch(best); return; }
+        }
+        if (t.contains("navigatore") || t.contains("mappa")) { launchSlot(SLOT_NAV); return; }
+        if (t.contains("musica") || t.contains("spotify")) { launchSlot(SLOT_MUSIC); return; }
+        if (t.contains("radio")) { launchSlot(4); return; }
+        if (t.contains("telefono")) { launchSlot(2); return; }
+
+        Toast.makeText(this, "Non ho capito: \u201c" + raw + "\u201d", Toast.LENGTH_LONG).show();
+    }
+
+    private void launchSlot(int idx) {
+        AppEntry e = resolveSlot(SLOTS[idx]);
+        if (e != null) launch(e);
+        else Toast.makeText(this, "Nessuna app per " + SLOTS[idx].label, Toast.LENGTH_SHORT).show();
     }
 
     private EditText makeInput(String hint) {
