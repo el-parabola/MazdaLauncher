@@ -572,7 +572,7 @@ public class MainActivity extends Activity {
 
     // ---------- Percorso nel launcher (prototipo online) ----------
     private static final String NOMINATIM = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=";
-    private static final String VALHALLA = "https://valhalla1.openstreetmap.de/route";
+    private static final String VALHALLA = "https://valhalla.openstreetmap.de/route";
 
     /** Calcola il percorso dalla posizione attuale alla destinazione e lo disegna sulla mappa. */
     private void routeTo(String destination) {
