@@ -226,6 +226,19 @@ public class MainActivity extends Activity {
         map.onPause();
     }
 
+    /** Quando un'altra app (es. Maps) passa in primo piano, libera la RAM della mappa del launcher. */
+    @Override
+    protected void onStop() {
+        super.onStop();
+        map.getTileProvider().clearTileCache();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_UI_HIDDEN) map.getTileProvider().clearTileCache();
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
