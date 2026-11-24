@@ -52,6 +52,8 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import org.osmdroid.api.IGeoPoint;
 import org.osmdroid.config.Configuration;
@@ -59,11 +61,18 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.CustomZoomButtonsController;
 import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Polyline;
 import org.osmdroid.views.overlay.TilesOverlay;
+import org.osmdroid.util.BoundingBox;
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider;
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -125,6 +134,9 @@ public class MainActivity extends Activity {
     private MapView map;
     private MyLocationNewOverlay myLocation;
     private TextView homeText, workText;
+    private View routeBar;
+    private TextView routeText;
+    private Polyline routeLine;
 
     // musica
     private ImageView mediaArt;
@@ -310,6 +322,9 @@ public class MainActivity extends Activity {
 
         findViewById(R.id.search).setOnClickListener(v -> askDestination());
         findViewById(R.id.btn_voice).setOnClickListener(v -> startVoice());
+        routeBar = findViewById(R.id.route_bar);
+        routeText = findViewById(R.id.route_text);
+        findViewById(R.id.route_clear).setOnClickListener(v -> clearRoute());
 
         homeText = findViewById(R.id.place_home_text);
         workText = findViewById(R.id.place_work_text);
@@ -365,7 +380,7 @@ public class MainActivity extends Activity {
 
     private void goToPlace(String key, String label) {
         String addr = prefs.getString("place_" + key, "");
-        if (addr.isEmpty()) editPlace(key, label); else navigateTo(addr);
+        if (addr.isEmpty()) editPlace(key, label); else routeTo(addr);
     }
 
     private void editPlace(String key, String label) {
@@ -395,13 +410,13 @@ public class MainActivity extends Activity {
                 .setView(wrap(input))
                 .setPositiveButton("Naviga", (d, w) -> {
                     String q = input.getText().toString().trim();
-                    if (!q.isEmpty()) navigateTo(q);
+                    if (!q.isEmpty()) routeTo(q);
                 })
                 .setNegativeButton("Annulla", null)
                 .create();
         input.setOnEditorActionListener((v, actionId, ev) -> {
             String q = input.getText().toString().trim();
-            if (!q.isEmpty()) { dialog.dismiss(); navigateTo(q); }
+            if (!q.isEmpty()) { dialog.dismiss(); routeTo(q); }
             return true;
         });
         dialog.show();
@@ -516,7 +531,7 @@ public class MainActivity extends Activity {
 
         arg = after(t, "naviga verso", "naviga a", "naviga in", "naviga", "portami a", "portami in",
                 "portami", "andiamo a", "andiamo in", "vai a", "vai in", "indicazioni per");
-        if (arg != null && !arg.isEmpty()) { navigateTo(arg); return; }
+        if (arg != null && !arg.isEmpty()) { routeTo(arg); return; }
 
         arg = after(t, "chiama", "telefona a", "telefona");
         if (arg != null) {
@@ -553,6 +568,97 @@ public class MainActivity extends Activity {
         AppEntry e = resolveSlot(SLOTS[idx]);
         if (e != null) launch(e);
         else Toast.makeText(this, "Nessuna app per " + SLOTS[idx].label, Toast.LENGTH_SHORT).show();
+    }
+
+    // ---------- Percorso nel launcher (prototipo online) ----------
+    private static final String NOMINATIM = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=";
+    private static final String OSRM = "https://router.project-osrm.org/route/v1/driving/";
+
+    /** Calcola il percorso dalla posizione attuale alla destinazione e lo disegna sulla mappa. */
+    private void routeTo(String destination) {
+        GeoPoint me = myLocation == null ? null : myLocation.getMyLocation();
+        if (me == null) {
+            Toast.makeText(this, "Cerco il segnale GPS…", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "Calcolo il percorso…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                JSONArray hits = new JSONArray(httpGet(NOMINATIM + Uri.encode(destination)));
+                if (hits.length() == 0) {
+                    main.post(() -> Toast.makeText(this, "Indirizzo non trovato", Toast.LENGTH_LONG).show());
+                    return;
+                }
+                JSONObject hit = hits.getJSONObject(0);
+                double dLat = Double.parseDouble(hit.getString("lat"));
+                double dLon = Double.parseDouble(hit.getString("lon"));
+
+                String url = String.format(Locale.US, "%s%f,%f;%f,%f?overview=full&geometries=geojson",
+                        OSRM, me.getLongitude(), me.getLatitude(), dLon, dLat);
+                JSONObject r = new JSONObject(httpGet(url));
+                if (!"Ok".equals(r.optString("code")) || r.getJSONArray("routes").length() == 0) {
+                    throw new IllegalStateException("nessun percorso");
+                }
+                JSONObject route = r.getJSONArray("routes").getJSONObject(0);
+                double meters = route.getDouble("distance");
+                double secs = route.getDouble("duration");
+                JSONArray coords = route.getJSONObject("geometry").getJSONArray("coordinates");
+                ArrayList<GeoPoint> pts = new ArrayList<>();
+                for (int i = 0; i < coords.length(); i++) {
+                    JSONArray c = coords.getJSONArray(i);
+                    pts.add(new GeoPoint(c.getDouble(1), c.getDouble(0)));
+                }
+                main.post(() -> showRoute(pts, meters, secs, destination));
+            } catch (Exception e) {
+                // niente rete o servizio non raggiungibile: prova il navigatore del dock
+                main.post(() -> {
+                    Toast.makeText(this, "Percorso non disponibile, apro il Navigatore", Toast.LENGTH_LONG).show();
+                    navigateTo(destination);
+                });
+            }
+        }, "route").start();
+    }
+
+    private static String httpGet(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(8000);
+        c.setReadTimeout(12000);
+        c.setRequestProperty("User-Agent", "MazdaLauncher/2.4");
+        c.setRequestProperty("Accept-Language", "it");
+        try (InputStream in = c.getInputStream()) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    private void showRoute(List<GeoPoint> pts, double meters, double secs, String dest) {
+        if (routeLine != null) map.getOverlays().remove(routeLine);
+        routeLine = new Polyline();
+        routeLine.setPoints(pts);
+        routeLine.getOutlinePaint().setColor(0xFFB3112E);
+        routeLine.getOutlinePaint().setStrokeWidth(dp(7));
+        map.getOverlays().add(0, routeLine);
+
+        String km = String.format(Locale.ITALY, "%.1f km", meters / 1000.0);
+        long min = Math.max(1, Math.round(secs / 60.0));
+        routeText.setText(dest + " · " + km + " · " + min + " min");
+        routeBar.setVisibility(View.VISIBLE);
+        map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts), true, dp(60));
+        map.invalidate();
+    }
+
+    private void clearRoute() {
+        if (routeLine != null) {
+            map.getOverlays().remove(routeLine);
+            routeLine = null;
+        }
+        routeBar.setVisibility(View.GONE);
+        map.invalidate();
     }
 
     private EditText makeInput(String hint) {

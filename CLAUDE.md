@@ -27,7 +27,7 @@ Launcher Android personalizzato per l'autoradio Android della Mazda 2 (2019, 1.5
   - **In alto a sinistra** (peso 1.65): **mappa OpenStreetMap** scura (colori invertiti), freccia rossa della posizione GPS che segue l'auto, barra "Dove vuoi andare?", scorciatoie **Casa** e **Lavoro**, pulsanti centra/zoom
   - **In alto a destra** (peso 1): **brano in riproduzione**: nome dell'app in rosso, copertina, titolo, artista, barra di avanzamento con i tempi, ⏮ ⏯ ⏭ (play dentro un anello rosso)
   - **Dock in basso** (92dp): Navigatore, Musica, Telefono, CarPlay/Auto, Radio, Impostazioni, Tutte le app; a destra un orologio piccolo con la data
-- La navigazione vera **non è incorporata**: su Android 9 senza root non si può. La ricerca e Casa/Lavoro aprono l'app del dock "Navigatore" con la destinazione (`google.navigation:q=` per Google Maps, `geo:0,0?q=` per le altre)
+- Percorso nel launcher (prototipo, v2.4): geocodifica con Nominatim e percorso con OSRM pubblico, solo online (Wi-Fi). Niente voce né svolte: si vede la linea e distanza/tempo. Se la rete manca o fallisce, ricade sul Navigatore del dock (`google.navigation:q=` per Google Maps, `geo:0,0?q=` per le altre). Il dock Navigatore resta esterno.
 - Casa/Lavoro: tocco = naviga (se vuoto chiede l'indirizzo), pressione lunga = modifica. Salvati in prefs `place_home` / `place_work`
 - Dock configurabile: **pressione lunga = scegli l'app** (prefs `launcher`, chiave `slot_<key>`; stringa vuota = svuotata, chiave assente = pacchetti predefiniti). Le icone senza app sono attenuate.
 - Musica: MediaSessionManager tramite `MediaListenerService` (serve l'accesso alle notifiche). Senza permesso i tasti usano `AudioManager.dispatchMediaKeyEvent`
