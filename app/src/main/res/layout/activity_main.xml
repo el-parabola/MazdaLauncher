@@ -241,69 +241,59 @@
                 android:paddingStart="20dp"
                 android:paddingTop="18dp"
                 android:paddingEnd="20dp"
-                android:paddingBottom="10dp">
+                android:paddingBottom="12dp">
 
-                <LinearLayout
+                <TextView
+                    android:id="@+id/media_source"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:gravity="center"
+                    android:letterSpacing="0.15"
+                    android:singleLine="true"
+                    android:textAllCaps="true"
+                    android:textColor="@color/mazda_red"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-                    <ImageView
-                        android:id="@+id/media_art"
-                        android:layout_width="140dp"
-                        android:layout_height="140dp"
-                        android:background="@drawable/art_bg"
-                        android:elevation="6dp"
-                        android:scaleType="centerCrop" />
+                <ImageView
+                    android:id="@+id/media_art"
+                    android:layout_width="150dp"
+                    android:layout_height="150dp"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/art_bg"
+                    android:elevation="6dp"
+                    android:scaleType="centerCrop" />
 
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="18dp"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
+                <TextView
+                    android:id="@+id/media_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:singleLine="true"
+                    android:textColor="@color/text"
+                    android:textSize="22sp" />
 
-                        <TextView
-                            android:id="@+id/media_source"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:letterSpacing="0.15"
-                            android:singleLine="true"
-                            android:textAllCaps="true"
-                            android:textColor="@color/mazda_red"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/media_title"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp"
-                            android:ellipsize="end"
-                            android:fontFamily="sans-serif-medium"
-                            android:maxLines="2"
-                            android:textColor="@color/text"
-                            android:textSize="24sp" />
-
-                        <TextView
-                            android:id="@+id/media_artist"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:ellipsize="end"
-                            android:singleLine="true"
-                            android:textColor="@color/text_dim"
-                            android:textSize="17sp" />
-                    </LinearLayout>
-                </LinearLayout>
+                <TextView
+                    android:id="@+id/media_artist"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:gravity="center"
+                    android:singleLine="true"
+                    android:textColor="@color/text_dim"
+                    android:textSize="16sp" />
 
                 <ProgressBar
                     android:id="@+id/media_progress"
                     style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="match_parent"
                     android:layout_height="4dp"
-                    android:layout_marginTop="18dp"
+                    android:layout_marginTop="12dp"
                     android:max="1000"
                     android:progressBackgroundTint="#40FFFFFF"
                     android:progressTint="@color/mazda_red" />
@@ -334,7 +324,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_weight="1"
-                    android:gravity="center"
+                    android:gravity="center|bottom"
                     android:orientation="horizontal">
 
                     <ImageButton
