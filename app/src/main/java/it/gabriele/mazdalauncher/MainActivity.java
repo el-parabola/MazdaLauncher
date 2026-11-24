@@ -1390,8 +1390,11 @@ public class MainActivity extends Activity {
         View save = findViewById(R.id.park_save);
         setCard(parkGo, R.drawable.ic_nav, "Portami all'auto", "Apre il navigatore");
         setCard(save, R.drawable.ic_pin, "Salva qui", "Posizione attuale");
+        View share = findViewById(R.id.park_share);
+        setCard(share, R.drawable.ic_share, "Condividi", "Posizione auto");
         parkGo.setOnClickListener(v -> goToCar());
         save.setOnClickListener(v -> saveParking(false));
+        share.setOnClickListener(v -> shareParking());
         updateParkUi();
     }
 
@@ -1425,6 +1428,26 @@ public class MainActivity extends Activity {
             prefs.edit().putString("park_addr", addr).apply();
             updateParkUi();
         });
+    }
+
+    /** Condivide il link di Google Maps con la posizione dell'auto (WhatsApp, SMS, e-mail…). */
+    private void shareParking() {
+        if (!hasPark()) {
+            Toast.makeText(this, "Prima salva dove hai parcheggiato", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String addr = prefs.getString("park_addr", "");
+        String text = "La mia auto è parcheggiata"
+                + (addr.isEmpty() ? "" : " in " + addr)
+                + " (" + whenText(prefs.getLong("park_time", 0)) + "):\n"
+                + String.format(Locale.US, "https://maps.google.com/?q=%.6f,%.6f", parkLat(), parkLon());
+        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(send, "Condividi posizione"));
+        } catch (Exception e) {
+            Toast.makeText(this, "Nessuna app per condividere", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void goToCar() {
