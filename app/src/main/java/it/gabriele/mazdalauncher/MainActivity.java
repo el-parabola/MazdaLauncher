@@ -572,7 +572,7 @@ public class MainActivity extends Activity {
 
     // ---------- Percorso nel launcher (prototipo online) ----------
     private static final String NOMINATIM = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=";
-    private static final String OSRM = "https://router.project-osrm.org/route/v1/driving/";
+    private static final String VALHALLA = "https://valhalla1.openstreetmap.de/route";
 
     /** Calcola il percorso dalla posizione attuale alla destinazione e lo disegna sulla mappa. */
     private void routeTo(String destination) {
@@ -582,11 +582,10 @@ public class MainActivity extends Activity {
             return;
         }
         Toast.makeText(this, "Calcolo il percorso…", Toast.LENGTH_SHORT).show();
-        final String[] stage = {"indirizzo"};
+        final String[] stage = {"indirizzo (rete)"};
         new Thread(() -> {
             try {
-                stage[0] = "indirizzo (rete)";
-                JSONArray hits = new JSONArray(httpGet(NOMINATIM + Uri.encode(destination)));
+                JSONArray hits = new JSONArray(httpRequest(NOMINATIM + Uri.encode(destination), null));
                 if (hits.length() == 0) {
                     main.post(() -> showRouteError("indirizzo", "nessun risultato per \u201c" + destination + "\u201d"));
                     return;
@@ -596,24 +595,25 @@ public class MainActivity extends Activity {
                 double dLon = Double.parseDouble(hit.getString("lon"));
 
                 stage[0] = "percorso (rete)";
-                String url = String.format(Locale.US, "%s%f,%f;%f,%f?overview=full&geometries=geojson",
-                        OSRM, me.getLongitude(), me.getLatitude(), dLon, dLat);
-                JSONObject r = new JSONObject(httpGet(url));
-                if (!"Ok".equals(r.optString("code")) || r.getJSONArray("routes").length() == 0) {
-                    main.post(() -> showRouteError("percorso", "il server non ha trovato una strada (code "
-                            + r.optString("code") + ")"));
+                String body = String.format(Locale.US,
+                        "{\"locations\":[{\"lat\":%f,\"lon\":%f},{\"lat\":%f,\"lon\":%f}],"
+                        + "\"costing\":\"auto\",\"directions_options\":{\"units\":\"kilometers\"}}",
+                        me.getLatitude(), me.getLongitude(), dLat, dLon);
+                JSONObject r = new JSONObject(httpRequest(VALHALLA, body));
+                if (r.has("error") || !r.has("trip")) {
+                    main.post(() -> showRouteError("percorso", r.optString("error", "risposta senza percorso")));
                     return;
                 }
-                JSONObject route = r.getJSONArray("routes").getJSONObject(0);
-                double meters = route.getDouble("distance");
-                double secs = route.getDouble("duration");
-                JSONArray coords = route.getJSONObject("geometry").getJSONArray("coordinates");
+                JSONObject trip = r.getJSONObject("trip");
+                JSONObject summary = trip.getJSONObject("summary");
+                double km = summary.getDouble("length");
+                double secs = summary.getDouble("time");
                 ArrayList<GeoPoint> pts = new ArrayList<>();
-                for (int i = 0; i < coords.length(); i++) {
-                    JSONArray c = coords.getJSONArray(i);
-                    pts.add(new GeoPoint(c.getDouble(1), c.getDouble(0)));
+                JSONArray legs = trip.getJSONArray("legs");
+                for (int i = 0; i < legs.length(); i++) {
+                    pts.addAll(decodePolyline(legs.getJSONObject(i).getString("shape")));
                 }
-                main.post(() -> showRoute(pts, meters, secs, destination));
+                main.post(() -> showRoute(pts, km * 1000.0, secs, destination));
             } catch (Exception e) {
                 String why = e.getClass().getSimpleName()
                         + (e.getMessage() != null ? ": " + e.getMessage() : "");
@@ -633,21 +633,57 @@ public class MainActivity extends Activity {
         map.invalidate();
     }
 
-    private static String httpGet(String url) throws Exception {
+    /** GET se body è null, altrimenti POST con corpo JSON. */
+    private static String httpRequest(String url, String body) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(12000);
-        c.setRequestProperty("User-Agent", "MazdaLauncher/2.4");
+        c.setRequestProperty("User-Agent", "MazdaLauncher/2.5");
         c.setRequestProperty("Accept-Language", "it");
-        try (InputStream in = c.getInputStream()) {
+        if (body != null) {
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/json");
+            try (java.io.OutputStream os = c.getOutputStream()) {
+                os.write(body.getBytes(StandardCharsets.UTF_8));
+            }
+        }
+        // Valhalla risponde con errori HTTP 400 che hanno comunque un JSON utile
+        InputStream in = c.getResponseCode() >= 400 ? c.getErrorStream() : c.getInputStream();
+        try (InputStream src = in) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[4096];
             int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            while ((n = src.read(buf)) > 0) out.write(buf, 0, n);
             return new String(out.toByteArray(), StandardCharsets.UTF_8);
         } finally {
             c.disconnect();
         }
+    }
+
+    /** Decodifica una polilinea Google/Valhalla a precisione 6 (1e-6 gradi). */
+    private static List<GeoPoint> decodePolyline(String enc) {
+        List<GeoPoint> out = new ArrayList<>();
+        int index = 0, lat = 0, lng = 0;
+        while (index < enc.length()) {
+            int b, shift = 0, result = 0;
+            do {
+                b = enc.charAt(index++) - 63;
+                result |= (b & 0x1f) << shift;
+                shift += 5;
+            } while (b >= 0x20);
+            lat += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+            shift = 0;
+            result = 0;
+            do {
+                b = enc.charAt(index++) - 63;
+                result |= (b & 0x1f) << shift;
+                shift += 5;
+            } while (b >= 0x20);
+            lng += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+            out.add(new GeoPoint(lat / 1e6, lng / 1e6));
+        }
+        return out;
     }
 
     private void showRoute(List<GeoPoint> pts, double meters, double secs, String dest) {
