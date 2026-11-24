@@ -1,0 +1,16 @@
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#E63A0A14" />
+            <stroke android:width="1dp" android:color="@color/mazda_red" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#E60D0E10" />
+            <stroke android:width="1dp" android:color="@color/line" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</selector>

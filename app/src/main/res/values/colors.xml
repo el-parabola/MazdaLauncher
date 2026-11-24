@@ -1,0 +1,9 @@
+<resources>
+    <color name="bg">#FF0B0C0E</color>
+    <color name="mazda_red">#FFB3112E</color>
+    <color name="line">#1FFFFFFF</color>
+    <color name="text">#FFECEFF1</color>
+    <color name="text_dim">#FF9AA0A6</color>
+    <color name="icon">#FFD7DBDF</color>
+    <color name="icon_bg">#FF8E0E24</color>
+</resources>

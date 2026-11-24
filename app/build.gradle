@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'it.gabriele.mazdalauncher'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'it.gabriele.mazdalauncher'
+        minSdk 28          // Android 9, come l'autoradio
+        targetSdk 28
+        versionCode 2
+        versionName '2.0'
+    }
+
+    // Chiave fissa: cosi' ogni nuova versione si installa sopra la precedente
+    signingConfigs {
+        debug {
+            storeFile file('launcher.keystore')
+            storePassword 'mazda2019'
+            keyAlias 'launcher'
+            keyPassword 'mazda2019'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.debug }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Mappa OpenStreetMap: nessuna chiave o account richiesti
+    implementation 'org.osmdroid:osmdroid-android:6.1.20'
+}

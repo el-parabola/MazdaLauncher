@@ -1,0 +1,18 @@
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <gradient android:angle="270" android:startColor="#40B3112E" android:endColor="#10B3112E" />
+                    <corners android:radius="12dp" />
+                </shape>
+            </item>
+            <item android:gravity="bottom" android:height="3dp">
+                <shape android:shape="rectangle">
+                    <solid android:color="@color/mazda_red" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item android:drawable="@android:color/transparent" />
+</selector>
