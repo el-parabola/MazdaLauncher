@@ -10,8 +10,8 @@ android {
         applicationId 'it.gabriele.mazdalauncher'
         minSdk 28          // Android 9, come l'autoradio
         targetSdk 28
-        versionCode 10
-        versionName '2.5.2'
+        versionCode 11
+        versionName '2.6'
     }
 
     // Chiave fissa: cosi' ogni nuova versione si installa sopra la precedente

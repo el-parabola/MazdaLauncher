@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="0dp"
-    android:layout_height="match_parent"
-    android:layout_marginStart="3dp"
-    android:layout_marginEnd="3dp"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_margin="3dp"
     android:layout_weight="1"
     android:background="@drawable/dock_item_bg"
     android:clickable="true"
@@ -13,16 +12,7 @@
 
     <ImageView
         android:id="@+id/dock_icon"
-        android:layout_width="34dp"
-        android:layout_height="34dp"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
         android:tint="@color/icon" />
-
-    <TextView
-        android:id="@+id/dock_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="5dp"
-        android:singleLine="true"
-        android:textColor="@color/text_dim"
-        android:textSize="13sp" />
 </LinearLayout>

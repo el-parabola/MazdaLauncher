@@ -267,6 +267,21 @@ public class MainActivity extends Activity {
         hideDrawer(); // tasto Home: torna alla schermata principale
     }
 
+    /** Barra di sistema nascosta: si mostra scorrendo dal bordo. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
+    }
+
     @Override
     public void onBackPressed() {
         if (drawer.getVisibility() == View.VISIBLE) hideDrawer();
@@ -621,8 +636,14 @@ public class MainActivity extends Activity {
                 }
                 main.post(() -> showRoute(pts, km * 1000.0, secs, destination));
             } catch (Exception e) {
-                String why = e.getClass().getSimpleName()
-                        + (e.getMessage() != null ? ": " + e.getMessage() : "");
+                // stampa tutta la catena delle cause, utile per capire l'errore di rete
+                StringBuilder sb = new StringBuilder();
+                for (Throwable t = e; t != null; t = t.getCause()) {
+                    if (sb.length() > 0) sb.append(" \u2190 ");
+                    sb.append(t.getClass().getSimpleName());
+                    if (t.getMessage() != null) sb.append(": ").append(t.getMessage());
+                }
+                String why = sb.toString();
                 main.post(() -> showRouteError(stage[0], why));
             }
         }, "route").start();
@@ -824,16 +845,15 @@ public class MainActivity extends Activity {
         for (int i = 0; i < total; i++) {
             View item = inf.inflate(R.layout.dock_item, dock, false);
             ImageView icon = item.findViewById(R.id.dock_icon);
-            TextView label = item.findViewById(R.id.dock_label);
             final int idx = i;
             if (i < SLOTS.length) {
                 icon.setImageResource(SLOTS[i].icon);
-                label.setText(SLOTS[i].label);
+                item.setContentDescription(SLOTS[i].label);
                 item.setOnClickListener(v -> onDockClick(idx));
                 item.setOnLongClickListener(v -> { pickApp(idx); return true; });
             } else {
                 icon.setImageResource(R.drawable.ic_apps);
-                label.setText("Tutte le app");
+                item.setContentDescription("Tutte le app");
                 item.setOnClickListener(v -> showDrawer());
             }
             dock.addView(item);
