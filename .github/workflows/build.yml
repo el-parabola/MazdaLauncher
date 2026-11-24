@@ -27,7 +27,9 @@ jobs:
         with:
           name: MazdaLauncher-apk
           path: MazdaLauncher.apk
-      - uses: softprops/action-gh-release@v2
+      # La Release si crea solo dai push su main: gli altri branch compilano e basta
+      - if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: Versione ${{ github.run_number }}
