@@ -3,11 +3,15 @@ package it.gabriele.mazdalauncher;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
@@ -23,6 +27,7 @@ import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.drawable.Drawable;
+import android.location.Location;
 import android.location.LocationManager;
 import android.media.AudioManager;
 import android.media.MediaMetadata;
@@ -39,6 +44,7 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.text.InputType;
+import android.text.format.DateUtils;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -82,6 +88,8 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Set;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -141,7 +149,6 @@ public class MainActivity extends Activity {
     // mappa
     private MapView map;
     private MyLocationNewOverlay myLocation;
-    private TextView homeText, workText;
     private View routeBar;
     private TextView routeText;
     private Polyline routeLine;
@@ -167,6 +174,7 @@ public class MainActivity extends Activity {
     private final Runnable progressTicker = new Runnable() {
         @Override public void run() {
             updateProgress();
+            onTick();
             main.postDelayed(this, 1000);
         }
     };
@@ -177,6 +185,11 @@ public class MainActivity extends Activity {
             bindDock();
             if (gridAdapter != null) gridAdapter.notifyDataSetChanged();
         }
+    };
+
+    /** Quando lo schermo si spegne (quadro off) salva in automatico dove è parcheggiata l'auto. */
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { saveParking(true); }
     };
 
     // ---------- Ciclo di vita ----------
@@ -199,6 +212,7 @@ public class MainActivity extends Activity {
         setupMap();
         setupMedia();
         setupDrawer();
+        setupPages();
 
         loadApps();
         buildDock();
@@ -210,6 +224,9 @@ public class MainActivity extends Activity {
         f.addAction(Intent.ACTION_PACKAGE_CHANGED);
         f.addDataScheme("package");
         registerReceiver(packageReceiver, f);
+        IntentFilter off = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        off.addAction(Intent.ACTION_SHUTDOWN);
+        registerReceiver(screenReceiver, off);
 
         if (hasLocationPermission()) {
             startLocation();
@@ -232,6 +249,7 @@ public class MainActivity extends Activity {
         map.onResume();
         if (hasLocationPermission()) startLocation();
         refreshSessions(); // anche al ritorno dalle impostazioni dei permessi
+        ensureObd();
         main.removeCallbacks(progressTicker);
         main.post(progressTicker);
     }
@@ -294,6 +312,8 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         try { unregisterReceiver(packageReceiver); } catch (Exception ignored) { }
+        try { unregisterReceiver(screenReceiver); } catch (Exception ignored) { }
+        if (obd != null) obd.stop();
         if (sessionsListenerOn) msm.removeOnActiveSessionsChangedListener(sessionsListener);
         setController(null);
         if (recognizer != null) recognizer.destroy();
@@ -309,7 +329,7 @@ public class MainActivity extends Activity {
 
     // ---------- Mappa ----------
     private void setupMap() {
-        FrameLayout panel = findViewById(R.id.map_panel);
+        View panel = findViewById(R.id.map_panel);
         panel.setClipToOutline(true); // angoli arrotondati anche sulla mappa
 
         map = findViewById(R.id.map);
@@ -358,15 +378,6 @@ public class MainActivity extends Activity {
         routeText = findViewById(R.id.route_text);
         findViewById(R.id.route_clear).setOnClickListener(v -> clearRoute());
 
-        homeText = findViewById(R.id.place_home_text);
-        workText = findViewById(R.id.place_work_text);
-        View home = findViewById(R.id.place_home);
-        View work = findViewById(R.id.place_work);
-        home.setOnClickListener(v -> goToPlace("home", "Casa"));
-        work.setOnClickListener(v -> goToPlace("work", "Lavoro"));
-        home.setOnLongClickListener(v -> { editPlace("home", "Casa"); return true; });
-        work.setOnLongClickListener(v -> { editPlace("work", "Lavoro"); return true; });
-        bindPlaces();
     }
 
     private boolean hasLocationPermission() {
@@ -401,13 +412,6 @@ public class MainActivity extends Activity {
         stroke.setColor(Color.WHITE);
         c.drawPath(p, stroke);
         return b;
-    }
-
-    private void bindPlaces() {
-        String h = prefs.getString("place_home", "");
-        String w = prefs.getString("place_work", "");
-        homeText.setText(h.isEmpty() ? "Casa" : "Casa · " + h);
-        workText.setText(w.isEmpty() ? "Lavoro" : "Lavoro · " + w);
     }
 
     private void goToPlace(String key, String label) {
@@ -457,6 +461,7 @@ public class MainActivity extends Activity {
 
     /** Apre il navigatore scelto nel dock con la destinazione. */
     private void navigateTo(String destination) {
+        addRecent(destination);
         AppEntry nav = resolveSlot(SLOTS[SLOT_NAV]);
         String pkg = nav != null ? nav.component.getPackageName() : null;
         if (MAPS_PKG.equals(pkg)) {
@@ -1120,6 +1125,524 @@ public class MainActivity extends Activity {
             AppEntry music = resolveSlot(SLOTS[SLOT_MUSIC]);
             if (music != null) launch(music);
         }
+    }
+
+    // ---------- Schede del pannello sinistro ----------
+    private static final String[] PAGE_TITLES = {"Destinazioni", "Parcheggio", "Auto", "Scadenze", "Mappa"};
+    private static final int PAGE_PARK = 1, PAGE_MAP = 4;
+    private View[] pageViews;
+    private TextView[] tabViews;
+    private int currentPage = 0;
+
+    private void setupPages() {
+        pageViews = new View[]{findViewById(R.id.page_places), findViewById(R.id.page_park),
+                findViewById(R.id.page_obd), findViewById(R.id.page_service), findViewById(R.id.page_map)};
+        LinearLayout tabs = findViewById(R.id.tabs);
+        tabViews = new TextView[PAGE_TITLES.length];
+        for (int i = 0; i < PAGE_TITLES.length; i++) {
+            TextView t = new TextView(this);
+            t.setText(PAGE_TITLES[i]);
+            t.setGravity(android.view.Gravity.CENTER);
+            t.setTextSize(15);
+            t.setSingleLine(true);
+            t.setClickable(true);
+            final int idx = i;
+            t.setOnClickListener(v -> showPage(idx));
+            tabs.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            tabViews[i] = t;
+        }
+        setupPlacesPage();
+        setupParkPage();
+        setupObdPage();
+        setupServicePage();
+        showPage(Math.max(0, Math.min(prefs.getInt("page", 0), PAGE_TITLES.length - 1)));
+    }
+
+    private void showPage(int idx) {
+        currentPage = idx;
+        for (int i = 0; i < pageViews.length; i++) {
+            pageViews[i].setVisibility(i == idx ? View.VISIBLE : View.GONE);
+            tabViews[i].setTextColor(i == idx ? 0xFFECEFF1 : 0xFF9AA0A6);
+            tabViews[i].setBackgroundResource(i == idx ? R.drawable.tab_sel : 0);
+        }
+        prefs.edit().putInt("page", idx).apply();
+        if (idx == PAGE_PARK) updateParkUi();
+    }
+
+    private void onTick() {
+        if (currentPage == PAGE_PARK) updateParkUi();
+        if (currentPage == PAGE_MAP) updateStreet();
+    }
+
+    private void setCard(View card, int icon, String title, String sub) {
+        ((ImageView) card.findViewById(R.id.card_icon)).setImageResource(icon);
+        ((TextView) card.findViewById(R.id.card_title)).setText(title);
+        ((TextView) card.findViewById(R.id.card_sub)).setText(sub);
+    }
+
+    // ----- Destinazioni -----
+    private View placeHome, placeWork;
+    private final View[] destCards = new View[4];
+    private View destEmpty;
+
+    private void setupPlacesPage() {
+        findViewById(R.id.search2).setOnClickListener(v -> askDestination());
+        findViewById(R.id.btn_voice2).setOnClickListener(v -> startVoice());
+        placeHome = findViewById(R.id.place_home);
+        placeWork = findViewById(R.id.place_work);
+        placeHome.setOnClickListener(v -> goToPlace("home", "Casa"));
+        placeWork.setOnClickListener(v -> goToPlace("work", "Lavoro"));
+        placeHome.setOnLongClickListener(v -> { editPlace("home", "Casa"); return true; });
+        placeWork.setOnLongClickListener(v -> { editPlace("work", "Lavoro"); return true; });
+        int[] ids = {R.id.dest_0, R.id.dest_1, R.id.dest_2, R.id.dest_3};
+        for (int i = 0; i < ids.length; i++) destCards[i] = findViewById(ids[i]);
+        destEmpty = findViewById(R.id.dest_empty);
+        bindPlaces();
+    }
+
+    private void bindPlaces() {
+        String h = prefs.getString("place_home", "");
+        String w = prefs.getString("place_work", "");
+        setCard(placeHome, R.drawable.ic_home, "Casa", h.isEmpty() ? "Tocca per impostare" : h);
+        setCard(placeWork, R.drawable.ic_work, "Lavoro", w.isEmpty() ? "Tocca per impostare" : w);
+        bindDest();
+    }
+
+    private List<String> loadList(String key) {
+        List<String> out = new ArrayList<>();
+        try {
+            JSONArray a = new JSONArray(prefs.getString(key, "[]"));
+            for (int i = 0; i < a.length(); i++) out.add(a.getString(i));
+        } catch (Exception ignored) { }
+        return out;
+    }
+
+    private void saveList(String key, List<String> list) {
+        prefs.edit().putString(key, new JSONArray(list).toString()).apply();
+    }
+
+    private void bindDest() {
+        if (destCards[0] == null) return;
+        List<String> favs = loadList("favs");
+        List<String> shown = new ArrayList<>(favs);
+        for (String r : loadList("recents")) if (!shown.contains(r)) shown.add(r);
+        for (int i = 0; i < destCards.length; i++) {
+            View card = destCards[i];
+            if (i >= shown.size()) { card.setVisibility(View.GONE); continue; }
+            final String d = shown.get(i);
+            boolean fav = favs.contains(d);
+            card.setVisibility(View.VISIBLE);
+            setCard(card, fav ? R.drawable.ic_star : R.drawable.ic_clock, d, fav ? "Preferito" : "Recente");
+            card.setOnClickListener(v -> navigateTo(d));
+            card.setOnLongClickListener(v -> { toggleFav(d); return true; });
+        }
+        destEmpty.setVisibility(shown.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    private void toggleFav(String d) {
+        List<String> favs = loadList("favs");
+        if (favs.remove(d)) {
+            Toast.makeText(this, "Tolto dai preferiti", Toast.LENGTH_SHORT).show();
+        } else {
+            favs.add(d);
+            Toast.makeText(this, "Aggiunto ai preferiti", Toast.LENGTH_SHORT).show();
+        }
+        saveList("favs", favs);
+        bindDest();
+    }
+
+    private void addRecent(String dest) {
+        String d = dest == null ? "" : dest.trim();
+        if (d.isEmpty()) return;
+        if (d.equalsIgnoreCase(prefs.getString("place_home", "").trim())
+                || d.equalsIgnoreCase(prefs.getString("place_work", "").trim())) return;
+        List<String> list = loadList("recents");
+        for (int i = list.size() - 1; i >= 0; i--) if (list.get(i).equalsIgnoreCase(d)) list.remove(i);
+        list.add(0, d);
+        while (list.size() > 8) list.remove(list.size() - 1);
+        saveList("recents", list);
+        bindDest();
+    }
+
+    // ----- Geocodifica inversa (via e città) -----
+    private static String firstOf(JSONObject o, String... keys) {
+        for (String k : keys) {
+            String v = o.optString(k, "");
+            if (!v.isEmpty()) return v;
+        }
+        return null;
+    }
+
+    /** cb(via, città): uno o entrambi null se non trovato; chiamato sul thread principale. */
+    private void reverseGeocode(double lat, double lon, java.util.function.BiConsumer<String, String> cb) {
+        new Thread(() -> {
+            String road = null, city = null;
+            try {
+                JSONObject j = new JSONObject(httpRequest(String.format(Locale.US,
+                        "https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&lat=%f&lon=%f",
+                        lat, lon), null));
+                JSONObject a = j.optJSONObject("address");
+                if (a != null) {
+                    road = firstOf(a, "road", "pedestrian", "footway", "path", "neighbourhood", "suburb");
+                    String hn = a.optString("house_number", "");
+                    if (road != null && !hn.isEmpty()) road += " " + hn;
+                    city = firstOf(a, "city", "town", "village", "municipality", "county");
+                }
+            } catch (Exception ignored) { }
+            final String r = road, c = city;
+            main.post(() -> cb.accept(r, c));
+        }, "reverse").start();
+    }
+
+    // ----- Parcheggio -----
+    private TextView parkTitle, parkAddr, parkDist, parkWalk;
+    private View parkGo;
+
+    private void setupParkPage() {
+        parkTitle = findViewById(R.id.park_title);
+        parkAddr = findViewById(R.id.park_addr);
+        parkDist = findViewById(R.id.park_dist);
+        parkWalk = findViewById(R.id.park_walk);
+        parkGo = findViewById(R.id.park_go);
+        View save = findViewById(R.id.park_save);
+        setCard(parkGo, R.drawable.ic_nav, "Portami all'auto", "Apre il navigatore");
+        setCard(save, R.drawable.ic_pin, "Salva qui", "Posizione attuale");
+        parkGo.setOnClickListener(v -> goToCar());
+        save.setOnClickListener(v -> saveParking(false));
+        updateParkUi();
+    }
+
+    private boolean hasPark() { return prefs.getBoolean("park_has", false); }
+    private double parkLat() { return Double.longBitsToDouble(prefs.getLong("park_lat", 0)); }
+    private double parkLon() { return Double.longBitsToDouble(prefs.getLong("park_lon", 0)); }
+
+    private void saveParking(boolean auto) {
+        Location fix = myLocation == null ? null : myLocation.getLastFix();
+        if (fix == null || (auto && System.currentTimeMillis() - fix.getTime() > 15 * 60_000L)) {
+            if (!auto) Toast.makeText(this, "Aspetto il segnale GPS…", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final double lat = fix.getLatitude(), lon = fix.getLongitude();
+        if (auto && hasPark()) { // già salvato qui: non sovrascrivere
+            float[] r = new float[1];
+            Location.distanceBetween(parkLat(), parkLon(), lat, lon, r);
+            if (r[0] < 30) return;
+        }
+        prefs.edit().putBoolean("park_has", true)
+                .putLong("park_lat", Double.doubleToRawLongBits(lat))
+                .putLong("park_lon", Double.doubleToRawLongBits(lon))
+                .putLong("park_time", System.currentTimeMillis())
+                .putString("park_addr", "").apply();
+        updateParkUi();
+        if (!auto) Toast.makeText(this, "Posizione dell'auto salvata", Toast.LENGTH_SHORT).show();
+        reverseGeocode(lat, lon, (road, city) -> {
+            if (road == null && city == null) return;
+            if (parkLat() != lat || parkLon() != lon) return; // nel frattempo salvata un'altra posizione
+            String addr = road == null ? city : (city == null ? road : road + ", " + city);
+            prefs.edit().putString("park_addr", addr).apply();
+            updateParkUi();
+        });
+    }
+
+    private void goToCar() {
+        if (!hasPark()) {
+            Toast.makeText(this, "Prima salva dove hai parcheggiato", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        AppEntry nav = resolveSlot(SLOTS[SLOT_NAV]);
+        String pkg = nav != null ? nav.component.getPackageName() : null;
+        String ll = parkLat() + "," + parkLon();
+        if (MAPS_PKG.equals(pkg)) sendNav(pkg, Uri.parse("google.navigation:q=" + ll + "&mode=w"));
+        else sendNav(pkg, Uri.parse("geo:" + ll + "?q=" + ll + "(Auto)"));
+    }
+
+    private static String whenText(long t) {
+        String hm = new java.text.SimpleDateFormat("HH:mm", Locale.ITALY).format(new java.util.Date(t));
+        String day;
+        if (DateUtils.isToday(t)) day = "oggi";
+        else if (DateUtils.isToday(t + DateUtils.DAY_IN_MILLIS)) day = "ieri";
+        else day = new java.text.SimpleDateFormat("d MMM", Locale.ITALY).format(new java.util.Date(t));
+        return day + " alle " + hm;
+    }
+
+    private void updateParkUi() {
+        if (parkTitle == null) return;
+        if (!hasPark()) {
+            parkTitle.setText("Nessun parcheggio salvato");
+            parkAddr.setText("Tocca “Salva qui” quando scendi dall'auto");
+            parkDist.setText("—");
+            parkWalk.setText("—");
+            parkGo.setAlpha(0.4f);
+            return;
+        }
+        parkGo.setAlpha(1f);
+        parkTitle.setText("Auto parcheggiata");
+        String addr = prefs.getString("park_addr", "");
+        String when = whenText(prefs.getLong("park_time", 0));
+        parkAddr.setText(addr.isEmpty() ? when : addr + " · " + when);
+        Location fix = myLocation == null ? null : myLocation.getLastFix();
+        if (fix == null) {
+            parkDist.setText("—");
+            parkWalk.setText("—");
+            return;
+        }
+        float[] r = new float[1];
+        Location.distanceBetween(fix.getLatitude(), fix.getLongitude(), parkLat(), parkLon(), r);
+        float m = r[0];
+        parkDist.setText(m < 1000 ? String.format(Locale.ITALY, "%d m", Math.round(m))
+                : String.format(Locale.ITALY, "%.1f km", m / 1000f));
+        long min = Math.max(1, Math.round(m / 80f)); // ~4,8 km/h
+        parkWalk.setText(min < 90 ? min + " min" : "—");
+    }
+
+    // ----- Via corrente sulla mappa -----
+    private long revAt;
+    private double revLat, revLon;
+    private boolean revBusy, revHas;
+
+    private void updateStreet() {
+        if (revBusy) return;
+        Location f = myLocation == null ? null : myLocation.getLastFix();
+        if (f == null) return;
+        long now = SystemClock.elapsedRealtime();
+        if (revAt != 0 && now - revAt < 15000) return; // massimo una richiesta ogni 15 s
+        if (revHas) {
+            float[] r = new float[1];
+            Location.distanceBetween(revLat, revLon, f.getLatitude(), f.getLongitude(), r);
+            if (r[0] < 150 && now - revAt < 120000) return;
+        }
+        revBusy = true;
+        revAt = now;
+        revLat = f.getLatitude();
+        revLon = f.getLongitude();
+        reverseGeocode(revLat, revLon, (road, city) -> {
+            revBusy = false;
+            if (road == null && city == null) return;
+            revHas = true;
+            ((TextView) findViewById(R.id.map_street)).setText(road != null ? road : city);
+            ((TextView) findViewById(R.id.map_city)).setText(road != null && city != null ? city : "");
+            findViewById(R.id.map_city).setVisibility(road != null && city != null ? View.VISIBLE : View.GONE);
+            findViewById(R.id.map_street_box).setVisibility(View.VISIBLE);
+        });
+    }
+
+    // ----- Dati auto (OBD2 Bluetooth) -----
+    private GaugeView gTemp, gBatt, gRpm, gCons;
+    private TextView obdStatus, obdTripText, obdTripAvg;
+    private ObdClient obd;
+    private double tripKm, tripLiters;
+    private long tripStart, lastObdAt;
+
+    private final ObdClient.Listener obdListener = new ObdClient.Listener() {
+        @Override public void onStatus(String s) {
+            obdStatus.setText(s);
+            if (!"Collegato".equals(s)) clearGauges();
+        }
+        @Override public void onData(double coolant, double volt, double rpm, double speed, double maf) {
+            updateObd(coolant, volt, rpm, speed, maf);
+        }
+    };
+
+    private void setupObdPage() {
+        gTemp = findViewById(R.id.g_temp);
+        gBatt = findViewById(R.id.g_batt);
+        gRpm = findViewById(R.id.g_rpm);
+        gCons = findViewById(R.id.g_cons);
+        obdStatus = findViewById(R.id.obd_status);
+        obdTripText = findViewById(R.id.obd_trip_text);
+        obdTripAvg = findViewById(R.id.obd_trip_avg);
+        View trip = findViewById(R.id.obd_trip);
+        trip.setOnClickListener(v -> pickObdDevice());
+        trip.setOnLongClickListener(v -> {
+            tripKm = 0; tripLiters = 0; tripStart = 0; lastObdAt = 0;
+            obdTripText.setText("Viaggio azzerato");
+            obdTripAvg.setText("");
+            return true;
+        });
+        clearGauges();
+        obdStatus.setText(prefs.getString("obd_mac", "").isEmpty() ? "Nessun dongle" : "Non collegato");
+        obdTripText.setText(prefs.getString("obd_mac", "").isEmpty()
+                ? "Tocca qui per scegliere il dongle OBD2" : "Tocca per cambiare dongle · pressione lunga = azzera viaggio");
+    }
+
+    private void clearGauges() {
+        if (gTemp == null) return;
+        gTemp.set("—", "°C", 0);
+        gBatt.set("—", "V", 0);
+        gRpm.set("—", "giri/min", 0);
+        gCons.set("—", "L/100", 0);
+    }
+
+    private void ensureObd() {
+        String mac = prefs.getString("obd_mac", "");
+        if (mac.isEmpty() || (obd != null && obd.isRunning())) return;
+        BluetoothAdapter ad = BluetoothAdapter.getDefaultAdapter();
+        if (ad == null || !ad.isEnabled()) {
+            obdStatus.setText("Bluetooth spento");
+            return;
+        }
+        try {
+            obd = new ObdClient(ad.getRemoteDevice(mac), obdListener, main);
+            obd.start();
+        } catch (Exception e) {
+            obdStatus.setText("Dongle non valido");
+        }
+    }
+
+    private void updateObd(double coolant, double volt, double rpm, double speed, double maf) {
+        long now = SystemClock.elapsedRealtime();
+        if (tripStart == 0) tripStart = now;
+        double dt = lastObdAt == 0 ? 0 : Math.min(5.0, (now - lastObdAt) / 1000.0);
+        lastObdAt = now;
+        double lph = Double.isNaN(maf) ? Double.NaN : maf * 3600.0 / (14.7 * 740.0); // benzina
+        if (!Double.isNaN(speed)) tripKm += speed * dt / 3600.0;
+        if (!Double.isNaN(lph)) tripLiters += lph * dt / 3600.0;
+
+        if (Double.isNaN(coolant)) gTemp.set("—", "°C", 0);
+        else gTemp.set(String.valueOf(Math.round(coolant)), "°C", (float) (coolant / 120.0));
+        if (Double.isNaN(volt)) gBatt.set("—", "V", 0);
+        else gBatt.set(String.format(Locale.ITALY, "%.1f", volt), "V", (float) ((volt - 11.0) / 4.0));
+        if (Double.isNaN(rpm)) gRpm.set("—", "giri/min", 0);
+        else gRpm.set(String.valueOf(Math.round(rpm)), "giri/min", (float) (rpm / 6500.0));
+        if (Double.isNaN(lph)) gCons.set("—", "L/100", 0);
+        else if (!Double.isNaN(speed) && speed >= 5) {
+            double l100 = lph / speed * 100.0;
+            gCons.set(String.format(Locale.ITALY, "%.1f", l100), "L/100", (float) (l100 / 15.0));
+        } else {
+            gCons.set(String.format(Locale.ITALY, "%.1f", lph), "L/h", (float) (lph / 15.0));
+        }
+
+        long min = (now - tripStart) / 60000;
+        obdTripText.setText(String.format(Locale.ITALY, "Viaggio: %.1f km · %d min", tripKm, min));
+        obdTripAvg.setText(tripKm > 0.5 && tripLiters > 0
+                ? String.format(Locale.ITALY, "media %.1f L/100", tripLiters / tripKm * 100.0) : "");
+    }
+
+    private void pickObdDevice() {
+        BluetoothAdapter ad = BluetoothAdapter.getDefaultAdapter();
+        if (ad == null) {
+            Toast.makeText(this, "Bluetooth non disponibile", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!ad.isEnabled()) {
+            Toast.makeText(this, "Accendi il Bluetooth e riprova", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Set<BluetoothDevice> bonded = ad.getBondedDevices();
+        final List<BluetoothDevice> devs = new ArrayList<>(bonded);
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setNeutralButton("Abbina nuovo…", (d, w) -> {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Apri le impostazioni Bluetooth dell'autoradio", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Scollega", (d, w) -> {
+                    prefs.edit().remove("obd_mac").apply();
+                    if (obd != null) obd.stop();
+                    obd = null;
+                    obdStatus.setText("Nessun dongle");
+                    clearGauges();
+                });
+        if (devs.isEmpty()) {
+            b.setTitle("Nessun dispositivo abbinato")
+                    .setMessage("Abbina prima il dongle OBD2 dalle impostazioni Bluetooth "
+                            + "(di solito PIN 1234 o 0000), poi torna qui.");
+        } else {
+            String[] names = new String[devs.size()];
+            for (int i = 0; i < names.length; i++) {
+                String n = devs.get(i).getName();
+                names[i] = (n != null ? n : "Sconosciuto") + "  (" + devs.get(i).getAddress() + ")";
+            }
+            b.setTitle("Scegli il dongle OBD2").setItems(names, (d, which) -> {
+                prefs.edit().putString("obd_mac", devs.get(which).getAddress()).apply();
+                if (obd != null) obd.stop();
+                obd = null;
+                tripKm = 0; tripLiters = 0; tripStart = 0; lastObdAt = 0;
+                obdTripText.setText("Viaggio: 0,0 km · 0 min");
+                obdTripAvg.setText("");
+                ensureObd();
+            });
+        }
+        b.show();
+    }
+
+    // ----- Scadenze -----
+    private static final String[][] SERVICES = {
+        {"service", "Tagliando"}, {"inspection", "Revisione"}, {"tax", "Bollo"}, {"insurance", "Assicurazione"}};
+    private final View[] svCards = new View[4];
+
+    private void setupServicePage() {
+        int[] ids = {R.id.sv_0, R.id.sv_1, R.id.sv_2, R.id.sv_3};
+        for (int i = 0; i < ids.length; i++) {
+            svCards[i] = findViewById(ids[i]);
+            ((TextView) svCards[i].findViewById(R.id.sv_title)).setText(SERVICES[i][1]);
+            final int idx = i;
+            svCards[i].setOnClickListener(v -> pickServiceDate(idx));
+        }
+        bindService();
+    }
+
+    private static long midnight(long t) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeInMillis(t);
+        c.set(Calendar.HOUR_OF_DAY, 0);
+        c.set(Calendar.MINUTE, 0);
+        c.set(Calendar.SECOND, 0);
+        c.set(Calendar.MILLISECOND, 0);
+        return c.getTimeInMillis();
+    }
+
+    private void bindService() {
+        long today = midnight(System.currentTimeMillis());
+        for (int i = 0; i < svCards.length; i++) {
+            long due = prefs.getLong("svc_" + SERVICES[i][0], 0);
+            TextView t = svCards[i].findViewById(R.id.sv_due);
+            ProgressBar bar = svCards[i].findViewById(R.id.sv_bar);
+            if (due == 0) {
+                t.setText("Tocca per impostare");
+                bar.setProgress(0);
+                continue;
+            }
+            long days = Math.round((due - today) / 86400000.0);
+            String text;
+            if (days < 0) text = "scaduto da " + (-days) + (days == -1 ? " giorno" : " giorni");
+            else if (days == 0) text = "scade oggi";
+            else if (days <= 60) text = "tra " + days + (days == 1 ? " giorno" : " giorni");
+            else {
+                long mesi = Math.round(days / 30.4);
+                text = "tra " + mesi + " mesi";
+            }
+            t.setText(text);
+            int color = days <= 30 ? 0xFFB3112E : (days <= 90 ? 0xFFD9A441 : 0xFF6A9955);
+            bar.setProgressTintList(ColorStateList.valueOf(color));
+            float used = 1f - Math.max(0, Math.min(365, days)) / 365f;
+            bar.setProgress(Math.round(used * 1000));
+        }
+    }
+
+    private void pickServiceDate(int idx) {
+        final String key = "svc_" + SERVICES[idx][0];
+        long due = prefs.getLong(key, 0);
+        Calendar c = Calendar.getInstance();
+        if (due > 0) c.setTimeInMillis(due);
+        DatePickerDialog dlg = new DatePickerDialog(this,
+                android.R.style.Theme_DeviceDefault_Dialog_Alert,
+                (v, y, m, d) -> {
+                    Calendar n = Calendar.getInstance();
+                    n.clear();
+                    n.set(y, m, d, 0, 0, 0);
+                    prefs.edit().putLong(key, n.getTimeInMillis()).apply();
+                    bindService();
+                }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH));
+        dlg.setTitle("Scadenza " + SERVICES[idx][1].toLowerCase(Locale.ITALY));
+        dlg.setButton(DialogInterface.BUTTON_NEUTRAL, "Cancella", (d, w) -> {
+            prefs.edit().remove(key).apply();
+            bindService();
+        });
+        dlg.show();
     }
 
     // ---------- Utilità ----------
