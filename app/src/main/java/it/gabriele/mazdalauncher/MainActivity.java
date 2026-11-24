@@ -582,22 +582,27 @@ public class MainActivity extends Activity {
             return;
         }
         Toast.makeText(this, "Calcolo il percorso…", Toast.LENGTH_SHORT).show();
+        final String[] stage = {"indirizzo"};
         new Thread(() -> {
             try {
+                stage[0] = "indirizzo (rete)";
                 JSONArray hits = new JSONArray(httpGet(NOMINATIM + Uri.encode(destination)));
                 if (hits.length() == 0) {
-                    main.post(() -> Toast.makeText(this, "Indirizzo non trovato", Toast.LENGTH_LONG).show());
+                    main.post(() -> showRouteError("indirizzo", "nessun risultato per \u201c" + destination + "\u201d"));
                     return;
                 }
                 JSONObject hit = hits.getJSONObject(0);
                 double dLat = Double.parseDouble(hit.getString("lat"));
                 double dLon = Double.parseDouble(hit.getString("lon"));
 
+                stage[0] = "percorso (rete)";
                 String url = String.format(Locale.US, "%s%f,%f;%f,%f?overview=full&geometries=geojson",
                         OSRM, me.getLongitude(), me.getLatitude(), dLon, dLat);
                 JSONObject r = new JSONObject(httpGet(url));
                 if (!"Ok".equals(r.optString("code")) || r.getJSONArray("routes").length() == 0) {
-                    throw new IllegalStateException("nessun percorso");
+                    main.post(() -> showRouteError("percorso", "il server non ha trovato una strada (code "
+                            + r.optString("code") + ")"));
+                    return;
                 }
                 JSONObject route = r.getJSONArray("routes").getJSONObject(0);
                 double meters = route.getDouble("distance");
@@ -610,13 +615,22 @@ public class MainActivity extends Activity {
                 }
                 main.post(() -> showRoute(pts, meters, secs, destination));
             } catch (Exception e) {
-                // niente rete o servizio non raggiungibile: prova il navigatore del dock
-                main.post(() -> {
-                    Toast.makeText(this, "Percorso non disponibile, apro il Navigatore", Toast.LENGTH_LONG).show();
-                    navigateTo(destination);
-                });
+                String why = e.getClass().getSimpleName()
+                        + (e.getMessage() != null ? ": " + e.getMessage() : "");
+                main.post(() -> showRouteError(stage[0], why));
             }
         }, "route").start();
+    }
+
+    /** Mostra il motivo nella barra del percorso, senza aprire altre app. */
+    private void showRouteError(String stage, String why) {
+        if (routeLine != null) {
+            map.getOverlays().remove(routeLine);
+            routeLine = null;
+        }
+        routeText.setText("Percorso non riuscito · " + stage + " · " + why);
+        routeBar.setVisibility(View.VISIBLE);
+        map.invalidate();
     }
 
     private static String httpGet(String url) throws Exception {
