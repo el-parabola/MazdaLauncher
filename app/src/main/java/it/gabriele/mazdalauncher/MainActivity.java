@@ -1000,6 +1000,17 @@ public class MainActivity extends Activity {
     private void setupMedia() {
         findViewById(R.id.media_panel).setOnClickListener(v -> onMediaPanelClick());
         mediaArt = findViewById(R.id.media_art);
+        // copertina quadrata, grande quanto lo spazio libero
+        View artBox = findViewById(R.id.media_art_box);
+        artBox.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int side = Math.min(r - l, b - t) - dp(8);
+            ViewGroup.LayoutParams lp = mediaArt.getLayoutParams();
+            if (side > 0 && lp.width != side) {
+                lp.width = side;
+                lp.height = side;
+                mediaArt.setLayoutParams(lp);
+            }
+        });
         mediaArt.setClipToOutline(true);
         mediaSource = findViewById(R.id.media_source);
         mediaTitle = findViewById(R.id.media_title);
