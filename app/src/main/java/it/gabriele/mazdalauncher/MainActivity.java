@@ -18,6 +18,8 @@ import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.drawable.Drawable;
@@ -316,7 +318,16 @@ public class MainActivity extends Activity {
         map.setTilesScaledToDpi(true);
         map.getZoomController().setVisibility(CustomZoomButtonsController.Visibility.NEVER);
         // mappa scura, in tinta con il resto
-        map.getOverlayManager().getTilesOverlay().setColorFilter(TilesOverlay.INVERT_COLORS);
+        // mappa minimal: grigia, invertita, con poco contrasto (strade chiare su fondo scuro)
+        ColorMatrix mono = new ColorMatrix();
+        mono.setSaturation(0f);
+        ColorMatrix invert = new ColorMatrix(new float[]{
+                -1, 0, 0, 0, 255,
+                0, -1, 0, 0, 255,
+                0, 0, -1, 0, 255,
+                0, 0, 0, 1, 0});
+        mono.postConcat(invert);
+        map.getOverlayManager().getTilesOverlay().setColorFilter(new ColorMatrixColorFilter(mono));
         map.getController().setZoom((double) prefs.getFloat("map_zoom", 16f));
         map.getController().setCenter(new GeoPoint(
                 prefs.getFloat("map_lat", 41.1171f), prefs.getFloat("map_lon", 16.8719f)));
