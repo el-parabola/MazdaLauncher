@@ -606,7 +606,13 @@ public class MainActivity extends Activity {
         final String[] stage = {"indirizzo (rete)"};
         new Thread(() -> {
             try {
-                JSONArray hits = new JSONArray(httpRequest(NOMINATIM + Uri.encode(destination), null));
+                // preferisce risultati vicino alla posizione attuale (Italia), senza escludere gli altri
+                // così "Viale Volga, 129" trova Bari anche senza città
+                String geo = NOMINATIM + Uri.encode(destination)
+                        + String.format(Locale.US, "&countrycodes=it&bounded=0&viewbox=%f,%f,%f,%f",
+                        me.getLongitude() - 0.8, me.getLatitude() + 0.6,
+                        me.getLongitude() + 0.8, me.getLatitude() - 0.6);
+                JSONArray hits = new JSONArray(httpRequest(geo, null));
                 if (hits.length() == 0) {
                     main.post(() -> showRouteError("indirizzo", "nessun risultato per \u201c" + destination + "\u201d"));
                     return;
