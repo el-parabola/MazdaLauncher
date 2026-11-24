@@ -1,0 +1,7 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:gravity="bottom" android:height="3dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/mazda_red" />
+        </shape>
+    </item>
+</layer-list>

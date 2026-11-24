@@ -31,6 +31,7 @@ Launcher Android personalizzato per l'autoradio Android della Mazda 2 (2019, 1.5
 - Casa/Lavoro: tocco = naviga (se vuoto chiede l'indirizzo), pressione lunga = modifica. Salvati in prefs `place_home` / `place_work`
 - Dock configurabile: **pressione lunga = scegli l'app** (prefs `launcher`, chiave `slot_<key>`; stringa vuota = svuotata, chiave assente = pacchetti predefiniti). Le icone senza app sono attenuate.
 - Musica: MediaSessionManager tramite `MediaListenerService` (serve l'accesso alle notifiche). Senza permesso i tasti usano `AudioManager.dispatchMediaKeyEvent`
+- **Pannello sinistro a 5 schede (v2.9)**, tab in alto, ultima scheda ricordata in prefs `page`: Destinazioni (ricerca, Casa/Lavoro, recenti `recents` e preferiti `favs`, pressione lunga = preferito), Parcheggio (posizione GPS salvata in `park_*`, salvataggio automatico allo spegnimento schermo, "Portami all'auto"), Auto (OBD2 via dongle ELM327 Bluetooth, `ObdClient.java`, `GaugeView.java`, MAC in prefs `obd_mac`; consumo stimato dal MAF), Scadenze (date in prefs `svc_*`), Mappa (OSM + via corrente da Nominatim reverse). Le anteprime scelte dall'utente erano tutte e 5.
 - Cassetto "Tutte le app": griglia; tocco = apre l'app, pressione lunga = info app
 - L'orologio grande non c'è più: l'utente ha scelto solo musica e mappa. Quello piccolo nel dock si può togliere se non gli piace.
 - Funzioni scartate: velocità GPS, meteo
@@ -41,7 +42,7 @@ Launcher Android personalizzato per l'autoradio Android della Mazda 2 (2019, 1.5
 - `LEGGIMI.md`: istruzioni per l'utente
 
 ## Stato
-- Versione 2 (design Mazda Connect) scritta, **mai compilata né provata sull'autoradio**. Il primo passo è verificare che la build di GitHub Actions passi.
+- v2.9 (5 schede) scritta ma mai provata sull'unità: OBD2, salvataggio automatico del parcheggio e tutto il resto vanno verificati. Versione 2 (design Mazda Connect) scritta, **mai compilata né provata sull'autoradio**. Il primo passo è verificare che la build di GitHub Actions passi.
 - Pacchetti predefiniti delle schede Telefono e Radio (com.syu.*, com.microntek.*) **ipotizzati**: vanno verificati sull'unità reale.
 - Da verificare sull'unità: la mappa scura con colori invertiti è leggibile? Il GPS dà la posizione dentro osmdroid? Il permesso di posizione viene chiesto al primo avvio.
 - Densità dello schermo sconosciuta (probabilmente 160 o 240 dpi): controllare che gli elementi entrino senza essere tagliati.

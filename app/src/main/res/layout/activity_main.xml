@@ -69,13 +69,55 @@
             android:layout_weight="1"
             android:orientation="horizontal">
 
-            <!-- MAPPA -->
-            <FrameLayout
+            <!-- PANNELLO SINISTRO: schede -->
+            <LinearLayout
                 android:id="@+id/map_panel"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1.65"
-                android:background="@drawable/panel_bg">
+                android:background="@drawable/panel_bg"
+                android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/tabs"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:orientation="horizontal" />
+
+            <FrameLayout
+                android:id="@+id/pages"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <include
+                    android:id="@+id/page_places"
+                    layout="@layout/page_places"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <include
+                    android:id="@+id/page_park"
+                    layout="@layout/page_park"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <include
+                    android:id="@+id/page_obd"
+                    layout="@layout/page_obd"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <include
+                    android:id="@+id/page_service"
+                    layout="@layout/page_service"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+            <FrameLayout
+                android:id="@+id/page_map"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
 
                 <org.osmdroid.views.MapView
                     android:id="@+id/map"
@@ -167,38 +209,35 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/map_street_box"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="bottom|start"
                     android:layout_margin="16dp"
-                    android:orientation="horizontal">
+                    android:background="@drawable/chip_bg"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingTop="8dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="8dp"
+                    android:visibility="gone">
 
-                    <LinearLayout
-                        android:id="@+id/place_home"
-                        style="@style/Chip">
+                    <TextView
+                        android:id="@+id/map_street"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:maxWidth="320dp"
+                        android:singleLine="true"
+                        android:ellipsize="end"
+                        android:textColor="@color/text"
+                        android:textSize="17sp" />
 
-                        <ImageView
-                            style="@style/ChipIcon"
-                            android:src="@drawable/ic_home" />
-
-                        <TextView
-                            android:id="@+id/place_home_text"
-                            style="@style/ChipText" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/place_work"
-                        style="@style/Chip"
-                        android:layout_marginStart="10dp">
-
-                        <ImageView
-                            style="@style/ChipIcon"
-                            android:src="@drawable/ic_work" />
-
-                        <TextView
-                            android:id="@+id/place_work_text"
-                            style="@style/ChipText" />
-                    </LinearLayout>
+                    <TextView
+                        android:id="@+id/map_city"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_dim"
+                        android:textSize="13sp" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -226,6 +265,8 @@
                         android:src="@drawable/ic_remove" />
                 </LinearLayout>
             </FrameLayout>
+            </FrameLayout>
+            </LinearLayout>
 
             <!-- MUSICA -->
             <LinearLayout
