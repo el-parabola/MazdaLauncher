@@ -33,7 +33,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -97,6 +99,8 @@ public class MainActivity extends Activity {
     private static final String MAPS_PKG = "com.google.android.apps.maps";
     private static final int REQ_LOCATION = 1;
     private static final int REQ_VOICE = 2;
+    private static final int REQ_AUDIO = 3;
+    private SpeechRecognizer recognizer;
 
     static final class AppEntry {
         final String label;
@@ -257,12 +261,15 @@ public class MainActivity extends Activity {
         try { unregisterReceiver(packageReceiver); } catch (Exception ignored) { }
         if (sessionsListenerOn) msm.removeOnActiveSessionsChangedListener(sessionsListener);
         setController(null);
+        if (recognizer != null) recognizer.destroy();
         map.onDetach();
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         if (requestCode == REQ_LOCATION && hasLocationPermission()) startLocation();
+        if (requestCode == REQ_AUDIO && results.length > 0
+                && results[0] == PackageManager.PERMISSION_GRANTED) startInAppRecognition();
     }
 
     // ---------- Mappa ----------
@@ -433,12 +440,52 @@ public class MainActivity extends Activity {
         try {
             startActivityForResult(i, REQ_VOICE);
         } catch (ActivityNotFoundException e) {
-            try {
-                startActivity(new Intent(Intent.ACTION_VOICE_COMMAND).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            } catch (ActivityNotFoundException e2) {
-                Toast.makeText(this, "Riconoscimento vocale non disponibile", Toast.LENGTH_LONG).show();
-            }
+            startInAppRecognition();
         }
+    }
+
+    /** Riconoscimento senza schermata di sistema: serve un servizio di riconoscimento (app Google). */
+    private void startInAppRecognition() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Riconoscimento vocale mancante")
+                    .setMessage("Su questa autoradio non c'\u00e8 nessun servizio di riconoscimento vocale. "
+                            + "Installa l'app Google (com.google.android.googlequicksearchbox) "
+                            + "e riprova.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
+            return;
+        }
+        if (recognizer != null) recognizer.destroy();
+        recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        recognizer.setRecognitionListener(new RecognitionListener() {
+            @Override public void onReadyForSpeech(Bundle b) {
+                Toast.makeText(MainActivity.this, "Ti ascolto\u2026", Toast.LENGTH_SHORT).show();
+            }
+            @Override public void onResults(Bundle b) {
+                ArrayList<String> r = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (r != null && !r.isEmpty()) handleVoice(r.get(0));
+            }
+            @Override public void onError(int code) {
+                Toast.makeText(MainActivity.this, code == SpeechRecognizer.ERROR_NO_MATCH
+                        || code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                        ? "Non ho sentito nulla" : "Errore riconoscimento vocale (" + code + ")",
+                        Toast.LENGTH_LONG).show();
+            }
+            @Override public void onBeginningOfSpeech() { }
+            @Override public void onRmsChanged(float v) { }
+            @Override public void onBufferReceived(byte[] b) { }
+            @Override public void onEndOfSpeech() { }
+            @Override public void onPartialResults(Bundle b) { }
+            @Override public void onEvent(int t, Bundle b) { }
+        });
+        recognizer.startListening(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "it-IT"));
     }
 
     @Override
