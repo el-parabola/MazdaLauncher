@@ -73,6 +73,12 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.cert.CertificateFactory;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -634,8 +640,39 @@ public class MainActivity extends Activity {
     }
 
     /** GET se body è null, altrimenti POST con corpo JSON. */
-    private static String httpRequest(String url, String body) throws Exception {
+    private SSLSocketFactory valhallaSocketFactory;
+
+    /**
+     * Valhalla usa una catena con radici ISRG Root X2 / Root YE, assenti nell'elenco di Android 9.
+     * Le aggiungiamo solo per questo server; la verifica del certificato resta attiva.
+     */
+    private SSLSocketFactory valhallaSockets() throws Exception {
+        if (valhallaSocketFactory == null) {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(null, null);
+            ks.setCertificateEntry("isrg_root_x2", loadCert(cf, R.raw.isrg_root_x2));
+            ks.setCertificateEntry("root_ye", loadCert(cf, R.raw.root_ye));
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ks);
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, tmf.getTrustManagers(), null);
+            valhallaSocketFactory = ctx.getSocketFactory();
+        }
+        return valhallaSocketFactory;
+    }
+
+    private java.security.cert.Certificate loadCert(CertificateFactory cf, int resId) throws Exception {
+        try (InputStream in = getResources().openRawResource(resId)) {
+            return cf.generateCertificate(in);
+        }
+    }
+
+    private String httpRequest(String url, String body) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        if (url.startsWith(VALHALLA) && c instanceof HttpsURLConnection) {
+            ((HttpsURLConnection) c).setSSLSocketFactory(valhallaSockets());
+        }
         c.setConnectTimeout(8000);
         c.setReadTimeout(12000);
         c.setRequestProperty("User-Agent", "MazdaLauncher/2.5");
