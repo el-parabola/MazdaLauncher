@@ -401,7 +401,7 @@ public class MainActivity extends Activity {
 
     private void goToPlace(String key, String label) {
         String addr = prefs.getString("place_" + key, "");
-        if (addr.isEmpty()) editPlace(key, label); else routeTo(addr);
+        if (addr.isEmpty()) editPlace(key, label); else navigateTo(addr);
     }
 
     private void editPlace(String key, String label) {
@@ -431,35 +431,68 @@ public class MainActivity extends Activity {
                 .setView(wrap(input))
                 .setPositiveButton("Naviga", (d, w) -> {
                     String q = input.getText().toString().trim();
-                    if (!q.isEmpty()) routeTo(q);
+                    if (!q.isEmpty()) navigateTo(q);
                 })
                 .setNegativeButton("Annulla", null)
                 .create();
         input.setOnEditorActionListener((v, actionId, ev) -> {
             String q = input.getText().toString().trim();
-            if (!q.isEmpty()) { dialog.dismiss(); routeTo(q); }
+            if (!q.isEmpty()) { dialog.dismiss(); navigateTo(q); }
             return true;
         });
         dialog.show();
         input.requestFocus();
     }
 
-    /** Apre il navigatore scelto nel dock con la destinazione già impostata. */
+    /** Apre il navigatore scelto nel dock con la destinazione. */
     private void navigateTo(String destination) {
         AppEntry nav = resolveSlot(SLOTS[SLOT_NAV]);
         String pkg = nav != null ? nav.component.getPackageName() : null;
-        Uri uri = MAPS_PKG.equals(pkg)
-                ? Uri.parse("google.navigation:q=" + Uri.encode(destination))
-                : Uri.parse("geo:0,0?q=" + Uri.encode(destination));
+        if (MAPS_PKG.equals(pkg)) {
+            // Google Maps capisce il testo da solo
+            sendNav(pkg, Uri.parse("google.navigation:q=" + Uri.encode(destination)));
+            return;
+        }
+        // Altri navigatori (es. Organic Maps): cerca le coordinate e passa un punto geo:
+        GeoPoint me = myLocation == null ? null : myLocation.getMyLocation();
+        Toast.makeText(this, "Cerco \u201c" + destination + "\u201d\u2026", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            Uri uri = null;
+            try {
+                String url = NOMINATIM + Uri.encode(destination);
+                if (me != null) {
+                    url += String.format(Locale.US, "&countrycodes=it&bounded=0&viewbox=%f,%f,%f,%f",
+                            me.getLongitude() - 0.8, me.getLatitude() + 0.6,
+                            me.getLongitude() + 0.8, me.getLatitude() - 0.6);
+                }
+                JSONArray hits = new JSONArray(httpRequest(url, null));
+                if (hits.length() > 0) {
+                    JSONObject h = hits.getJSONObject(0);
+                    String lat = h.getString("lat");
+                    String lon = h.getString("lon");
+                    uri = Uri.parse("geo:" + lat + "," + lon + "?q=" + lat + "," + lon
+                            + "(" + Uri.encode(destination) + ")");
+                }
+            } catch (Exception ignored) { }
+            final Uri found = uri;
+            main.post(() -> {
+                if (found == null) {
+                    Toast.makeText(this, "Indirizzo non trovato: controlla la rete o il nome", Toast.LENGTH_LONG).show();
+                } else {
+                    sendNav(pkg, found);
+                }
+            });
+        }, "geocode").start();
+    }
+
+    private void sendNav(String pkg, Uri uri) {
         Intent i = new Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         if (pkg != null) i.setPackage(pkg);
         try {
             startActivity(i);
         } catch (ActivityNotFoundException e) {
             try {
-                startActivity(new Intent(Intent.ACTION_VIEW,
-                        Uri.parse("geo:0,0?q=" + Uri.encode(destination)))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                startActivity(new Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             } catch (ActivityNotFoundException e2) {
                 Toast.makeText(this, "Nessun navigatore installato", Toast.LENGTH_LONG).show();
             }
@@ -552,7 +585,7 @@ public class MainActivity extends Activity {
 
         arg = after(t, "naviga verso", "naviga a", "naviga in", "naviga", "portami a", "portami in",
                 "portami", "andiamo a", "andiamo in", "vai a", "vai in", "indicazioni per");
-        if (arg != null && !arg.isEmpty()) { routeTo(arg); return; }
+        if (arg != null && !arg.isEmpty()) { navigateTo(arg); return; }
 
         arg = after(t, "chiama", "telefona a", "telefona");
         if (arg != null) {
@@ -594,66 +627,6 @@ public class MainActivity extends Activity {
     // ---------- Percorso nel launcher (prototipo online) ----------
     private static final String NOMINATIM = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=";
     private static final String VALHALLA = "https://valhalla.openstreetmap.de/route";
-
-    /** Calcola il percorso dalla posizione attuale alla destinazione e lo disegna sulla mappa. */
-    private void routeTo(String destination) {
-        GeoPoint me = myLocation == null ? null : myLocation.getMyLocation();
-        if (me == null) {
-            Toast.makeText(this, "Cerco il segnale GPS…", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        Toast.makeText(this, "Calcolo il percorso…", Toast.LENGTH_SHORT).show();
-        final String[] stage = {"indirizzo (rete)"};
-        new Thread(() -> {
-            try {
-                // preferisce risultati vicino alla posizione attuale (Italia), senza escludere gli altri
-                // così "Viale Volga, 129" trova Bari anche senza città
-                String geo = NOMINATIM + Uri.encode(destination)
-                        + String.format(Locale.US, "&countrycodes=it&bounded=0&viewbox=%f,%f,%f,%f",
-                        me.getLongitude() - 0.8, me.getLatitude() + 0.6,
-                        me.getLongitude() + 0.8, me.getLatitude() - 0.6);
-                JSONArray hits = new JSONArray(httpRequest(geo, null));
-                if (hits.length() == 0) {
-                    main.post(() -> showRouteError("indirizzo", "nessun risultato per \u201c" + destination + "\u201d"));
-                    return;
-                }
-                JSONObject hit = hits.getJSONObject(0);
-                double dLat = Double.parseDouble(hit.getString("lat"));
-                double dLon = Double.parseDouble(hit.getString("lon"));
-
-                stage[0] = "percorso (rete)";
-                String body = String.format(Locale.US,
-                        "{\"locations\":[{\"lat\":%f,\"lon\":%f},{\"lat\":%f,\"lon\":%f}],"
-                        + "\"costing\":\"auto\",\"directions_options\":{\"units\":\"kilometers\"}}",
-                        me.getLatitude(), me.getLongitude(), dLat, dLon);
-                JSONObject r = new JSONObject(httpRequest(VALHALLA, body));
-                if (r.has("error") || !r.has("trip")) {
-                    main.post(() -> showRouteError("percorso", r.optString("error", "risposta senza percorso")));
-                    return;
-                }
-                JSONObject trip = r.getJSONObject("trip");
-                JSONObject summary = trip.getJSONObject("summary");
-                double km = summary.getDouble("length");
-                double secs = summary.getDouble("time");
-                ArrayList<GeoPoint> pts = new ArrayList<>();
-                JSONArray legs = trip.getJSONArray("legs");
-                for (int i = 0; i < legs.length(); i++) {
-                    pts.addAll(decodePolyline(legs.getJSONObject(i).getString("shape")));
-                }
-                main.post(() -> showRoute(pts, km * 1000.0, secs, destination));
-            } catch (Exception e) {
-                // stampa tutta la catena delle cause, utile per capire l'errore di rete
-                StringBuilder sb = new StringBuilder();
-                for (Throwable t = e; t != null; t = t.getCause()) {
-                    if (sb.length() > 0) sb.append(" \u2190 ");
-                    sb.append(t.getClass().getSimpleName());
-                    if (t.getMessage() != null) sb.append(": ").append(t.getMessage());
-                }
-                String why = sb.toString();
-                main.post(() -> showRouteError(stage[0], why));
-            }
-        }, "route").start();
-    }
 
     /** Mostra il motivo nella barra del percorso, senza aprire altre app. */
     private void showRouteError(String stage, String why) {
