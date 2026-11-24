@@ -336,7 +336,7 @@ public class MainActivity extends Activity {
         map = findViewById(R.id.map);
         map.setTileSource(TileSourceFactory.MAPNIK);
         map.setMultiTouchControls(true);
-        map.setTilesScaledToDpi(true);
+        map.setTilesScaledToDpi(false); // tile 256px a dimensione nativa: più nitidi (ingrandirli alla densità dello schermo li sgranava)
         map.getZoomController().setVisibility(CustomZoomButtonsController.Visibility.NEVER);
         // mappa scura, in tinta con il resto
         // mappa minimal: grigia, invertita, con poco contrasto (strade chiare su fondo scuro)
@@ -359,6 +359,11 @@ public class MainActivity extends Activity {
         myLocation = new MyLocationNewOverlay(provider, map) {
             @Override
             public void onLocationChanged(Location loc, org.osmdroid.views.overlay.mylocation.IMyLocationProvider src) {
+                // il fix di rete è impreciso (decine di metri): lo scarto se il GPS è attivo
+                boolean net = LocationManager.NETWORK_PROVIDER.equals(loc.getProvider());
+                long now = SystemClock.elapsedRealtime();
+                if (!net) lastGpsAt = now;
+                else if (now - lastGpsAt < 20_000) return;
                 super.onLocationChanged(loc, src);
                 main.post(() -> feedFix(loc));
             }
@@ -424,6 +429,7 @@ public class MainActivity extends Activity {
 
     // ---------- Movimento fluido della freccia ----------
     private Bitmap arrowBmp;
+    private long lastGpsAt = -1_000_000;
     private boolean following = true;
     private Double dispLat, dispLon;      // posizione mostrata
     private float dispBearing;
@@ -453,7 +459,7 @@ public class MainActivity extends Activity {
         double lat = loc.getLatitude(), lon = loc.getLongitude();
         float brg = loc.hasBearing() ? loc.getBearing() : (dispLat == null ? 0f : toBrg);
         if (loc.hasSpeed() && loc.hasBearing() && loc.getSpeed() > 1f) {
-            double dist = loc.getSpeed() * ANIM_MS / 1000.0; // metri percorsi nel prossimo secondo
+            double dist = loc.getSpeed() * 0.5; // anticipo di mezzo secondo: meno errore in curva
             double r = Math.toRadians(brg);
             lat += Math.toDegrees(dist * Math.cos(r) / 6371000.0);
             lon += Math.toDegrees(dist * Math.sin(r) / (6371000.0 * Math.cos(Math.toRadians(lat))));
