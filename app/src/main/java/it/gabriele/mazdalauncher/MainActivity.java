@@ -265,6 +265,7 @@ public class MainActivity extends Activity {
                 .putFloat("map_zoom", (float) map.getZoomLevelDouble())
                 .apply();
         if (myLocation != null) myLocation.disableMyLocation();
+        main.removeCallbacks(frame);
         map.onPause();
     }
 
@@ -354,10 +355,38 @@ public class MainActivity extends Activity {
 
         GpsMyLocationProvider provider = new GpsMyLocationProvider(this);
         provider.addLocationSource(LocationManager.NETWORK_PROVIDER);
-        myLocation = new MyLocationNewOverlay(provider, map);
-        Bitmap arrow = makeArrow();
-        myLocation.setDirectionArrow(arrow, arrow);
+        // myLocation serve solo per i dati GPS (invisibile); freccia e inseguimento sono fluidi, ridisegnati a ogni frame
+        myLocation = new MyLocationNewOverlay(provider, map) {
+            @Override
+            public void onLocationChanged(Location loc, org.osmdroid.views.overlay.mylocation.IMyLocationProvider src) {
+                super.onLocationChanged(loc, src);
+                main.post(() -> feedFix(loc));
+            }
+        };
+        Bitmap blank = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+        myLocation.setPersonIcon(blank);
+        myLocation.setDirectionArrow(blank, blank);
         map.getOverlays().add(myLocation);
+        arrowBmp = makeArrow();
+        map.getOverlays().add(new org.osmdroid.views.overlay.Overlay() {
+            @Override
+            public void draw(Canvas c, MapView mv, boolean shadow) {
+                if (shadow || dispLat == null) return;
+                android.graphics.Point pt = mv.getProjection().toPixels(
+                        new GeoPoint(dispLat, dispLon), null);
+                android.graphics.Matrix m = new android.graphics.Matrix();
+                m.postTranslate(-arrowBmp.getWidth() / 2f, -arrowBmp.getHeight() / 2f);
+                m.postRotate(dispBearing + mv.getMapOrientation());
+                m.postTranslate(pt.x, pt.y);
+                c.drawBitmap(arrowBmp, m, null);
+            }
+
+            @Override
+            public boolean onTouchEvent(android.view.MotionEvent e, MapView mv) {
+                if (e.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) following = false;
+                return false;
+            }
+        });
 
         findViewById(R.id.btn_zoom_in).setOnClickListener(v -> map.getController().zoomIn());
         findViewById(R.id.btn_zoom_out).setOnClickListener(v -> map.getController().zoomOut());
@@ -366,9 +395,8 @@ public class MainActivity extends Activity {
                 requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_LOCATION);
                 return;
             }
-            myLocation.enableFollowLocation();
-            GeoPoint me = myLocation.getMyLocation();
-            if (me != null) map.getController().animateTo(me);
+            following = true;
+            if (dispLat != null) map.getController().animateTo(new GeoPoint(dispLat, dispLon));
             else Toast.makeText(this, "Cerco il segnale GPS…", Toast.LENGTH_SHORT).show();
         });
 
@@ -388,8 +416,52 @@ public class MainActivity extends Activity {
     private void startLocation() {
         try {
             myLocation.enableMyLocation();
-            myLocation.enableFollowLocation();
+            following = true;
         } catch (SecurityException ignored) { }
+        main.removeCallbacks(frame);
+        main.post(frame);
+    }
+
+    // ---------- Movimento fluido della freccia ----------
+    private Bitmap arrowBmp;
+    private boolean following = true;
+    private Double dispLat, dispLon;      // posizione mostrata
+    private float dispBearing;
+    private double fromLat, fromLon, toLat, toLon;
+    private float fromBrg, toBrg;
+    private long animStart;
+    private static final long ANIM_MS = 1000;
+
+    private final Runnable frame = new Runnable() {
+        @Override
+        public void run() {
+            if (dispLat != null) {
+                float t = Math.min(1f, (SystemClock.uptimeMillis() - animStart) / (float) ANIM_MS);
+                dispLat = fromLat + (toLat - fromLat) * t;
+                dispLon = fromLon + (toLon - fromLon) * t;
+                float d = ((toBrg - fromBrg + 540f) % 360f) - 180f; // via più breve
+                dispBearing = (fromBrg + d * t + 360f) % 360f;
+                if (following && t < 1f) map.getController().setCenter(new GeoPoint(dispLat, dispLon));
+                map.invalidate();
+            }
+            main.postDelayed(this, 33); // ~30 fps, leggero per la GPU
+        }
+    };
+
+    /** Nuovo fix GPS: parte dalla posizione mostrata e scorre verso la posizione prevista fra 1 s. */
+    private void feedFix(Location loc) {
+        double lat = loc.getLatitude(), lon = loc.getLongitude();
+        float brg = loc.hasBearing() ? loc.getBearing() : (dispLat == null ? 0f : toBrg);
+        if (loc.hasSpeed() && loc.hasBearing() && loc.getSpeed() > 1f) {
+            double dist = loc.getSpeed() * ANIM_MS / 1000.0; // metri percorsi nel prossimo secondo
+            double r = Math.toRadians(brg);
+            lat += Math.toDegrees(dist * Math.cos(r) / 6371000.0);
+            lon += Math.toDegrees(dist * Math.sin(r) / (6371000.0 * Math.cos(Math.toRadians(lat))));
+        }
+        if (dispLat == null) { dispLat = lat; dispLon = lon; dispBearing = brg; }
+        fromLat = dispLat; fromLon = dispLon; fromBrg = dispBearing;
+        toLat = lat; toLon = lon; toBrg = brg;
+        animStart = SystemClock.uptimeMillis();
     }
 
     /** Freccia rossa con bordo bianco per la posizione. */
