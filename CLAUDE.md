@@ -22,7 +22,7 @@ Launcher Android personalizzato per l'autoradio Android della Mazda 2 (2019, 1.5
 ## Scelte già fatte con l'utente (versione 2, design attuale)
 - La v1 a schede colorate è stata **scartata**: all'utente non piaceva.
 - Stile **ispirato a Mazda Connect**: fondo grafite scuro con gradiente radiale, pannelli con bordo sottile (#1FFFFFFF) e angoli da 14dp, accento **rosso Mazda #B3112E**, icone monocromatiche (#D7DBDF), testi chiari o grigi (#9AA0A6). Riferimento visivo: `anteprima.png`.
-- Solo Java e framework Android. Unica dipendenza: **osmdroid 6.1.20** per la mappa. minSdk e targetSdk 28.
+- Solo Java e framework Android. Dipendenze: **osmdroid 6.1.20** (mappa) e **zxing core 3.5.3** (QR code del parcheggio, scheda Parcheggio → "QR telefono"). minSdk e targetSdk 28.
 - Disposizione:
   - **In alto a sinistra** (peso 1.65): **mappa OpenStreetMap** scura (colori invertiti), freccia rossa della posizione GPS che segue l'auto, barra "Dove vuoi andare?", scorciatoie **Casa** e **Lavoro**, pulsanti centra/zoom
   - **In alto a destra** (peso 1): **brano in riproduzione**: nome dell'app in rosso, copertina, titolo, artista, barra di avanzamento con i tempi, ⏮ ⏯ ⏭ (play dentro un anello rosso)

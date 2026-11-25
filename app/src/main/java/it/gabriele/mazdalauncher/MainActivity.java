@@ -1414,7 +1414,7 @@ public class MainActivity extends Activity {
         setCard(parkGo, R.drawable.ic_nav, "Portami all'auto", "Apre il navigatore");
         setCard(save, R.drawable.ic_pin, "Salva qui", "Posizione attuale");
         View share = findViewById(R.id.park_share);
-        setCard(share, R.drawable.ic_share, "Condividi", "Posizione auto");
+        setCard(share, R.drawable.ic_share, "QR telefono", "Posizione auto");
         parkGo.setOnClickListener(v -> goToCar());
         save.setOnClickListener(v -> saveParking(false));
         share.setOnClickListener(v -> shareParking());
@@ -1453,24 +1453,37 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Condivide il link di Google Maps con la posizione dell'auto (WhatsApp, SMS, e-mail…). */
+    /** Mostra un QR code col link di Google Maps: lo inquadri col telefono prima di scendere. */
     private void shareParking() {
         if (!hasPark()) {
             Toast.makeText(this, "Prima salva dove hai parcheggiato", Toast.LENGTH_SHORT).show();
             return;
         }
-        String addr = prefs.getString("park_addr", "");
-        String text = "La mia auto è parcheggiata"
-                + (addr.isEmpty() ? "" : " in " + addr)
-                + " (" + whenText(prefs.getLong("park_time", 0)) + "):\n"
-                + String.format(Locale.US, "https://maps.google.com/?q=%.6f,%.6f", parkLat(), parkLon());
-        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                .putExtra(Intent.EXTRA_TEXT, text);
+        String link = String.format(Locale.US, "https://maps.google.com/?q=%.6f,%.6f", parkLat(), parkLon());
+        Bitmap qr;
         try {
-            startActivity(Intent.createChooser(send, "Condividi posizione"));
+            com.google.zxing.common.BitMatrix m = new com.google.zxing.qrcode.QRCodeWriter().encode(
+                    link, com.google.zxing.BarcodeFormat.QR_CODE, 0, 0,
+                    java.util.Collections.singletonMap(com.google.zxing.EncodeHintType.MARGIN, 2));
+            int w = m.getWidth(), h = m.getHeight(), scale = Math.max(1, 440 / w);
+            int[] px = new int[w * scale * h * scale];
+            for (int y = 0; y < h * scale; y++)
+                for (int x = 0; x < w * scale; x++)
+                    px[y * w * scale + x] = m.get(x / scale, y / scale) ? Color.BLACK : Color.WHITE;
+            qr = Bitmap.createBitmap(px, w * scale, h * scale, Bitmap.Config.ARGB_8888);
         } catch (Exception e) {
-            Toast.makeText(this, "Nessuna app per condividere", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Impossibile creare il QR code", Toast.LENGTH_SHORT).show();
+            return;
         }
+        ImageView img = new ImageView(this);
+        img.setImageBitmap(qr);
+        img.setPadding(24, 24, 24, 24);
+        new AlertDialog.Builder(this)
+                .setTitle("Inquadra col telefono")
+                .setMessage("Apre la posizione dell'auto in Google Maps")
+                .setView(img)
+                .setPositiveButton("Chiudi", null)
+                .show();
     }
 
     private void goToCar() {

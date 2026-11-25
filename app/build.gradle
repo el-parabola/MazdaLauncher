@@ -10,8 +10,8 @@ android {
         applicationId 'it.gabriele.mazdalauncher'
         minSdk 28          // Android 9, come l'autoradio
         targetSdk 28
-        versionCode 21
-        versionName '2.14'
+        versionCode 22
+        versionName '2.15'
     }
 
     // Chiave fissa: cosi' ogni nuova versione si installa sopra la precedente
@@ -35,4 +35,6 @@ android {
 dependencies {
     // Mappa OpenStreetMap: nessuna chiave o account richiesti
     implementation 'org.osmdroid:osmdroid-android:6.1.20'
+    // QR code per condividere il parcheggio (solo codifica, Java puro)
+    implementation 'com.google.zxing:core:3.5.3'
 }
