@@ -336,6 +336,18 @@ public class MainActivity extends Activity {
         map = findViewById(R.id.map);
         map.setTileSource(TileSourceFactory.MAPNIK);
         map.setMultiTouchControls(true);
+        // dopo un pizzico con due dita, assesta lo zoom sul livello intero: i tile restano nitidi
+        map.setOnTouchListener((v, e) -> {
+            int a = e.getActionMasked();
+            if (a == android.view.MotionEvent.ACTION_POINTER_DOWN) pinched = true;
+            else if (a == android.view.MotionEvent.ACTION_DOWN) main.removeCallbacks(snapZoom);
+            else if ((a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL) && pinched) {
+                pinched = false;
+                main.removeCallbacks(snapZoom);
+                main.postDelayed(snapZoom, 250);
+            }
+            return false;
+        });
         map.setTilesScaledToDpi(false); // tile 256px a dimensione nativa: più nitidi (ingrandirli alla densità dello schermo li sgranava)
         map.getZoomController().setVisibility(CustomZoomButtonsController.Visibility.NEVER);
         // mappa scura, in tinta con il resto
@@ -428,6 +440,11 @@ public class MainActivity extends Activity {
     }
 
     // ---------- Movimento fluido della freccia ----------
+    private boolean pinched;
+    private final Runnable snapZoom = () -> {
+        double z = map.getZoomLevelDouble(), r = Math.round(z);
+        if (Math.abs(z - r) > 0.02) map.getController().zoomTo(r, 200L);
+    };
     private Bitmap arrowBmp;
     private long lastGpsAt = -1_000_000;
     private boolean following = true;
