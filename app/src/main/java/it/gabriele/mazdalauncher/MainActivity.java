@@ -1059,9 +1059,12 @@ public class MainActivity extends Activity {
         if (!voiceOn) return;
         if (tts == null) {
             ttsPending = text;
-            tts = new TextToSpeech(getApplicationContext(), status -> {
+            TextToSpeech.OnInitListener init = status -> {
                 if (status != TextToSpeech.SUCCESS) return;
                 tts.setLanguage(Locale.ITALY);
+                pickBestVoice();
+                tts.setSpeechRate(0.95f);
+                tts.setPitch(1.0f);
                 tts.setAudioAttributes(new android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build());
@@ -1072,14 +1075,45 @@ public class MainActivity extends Activity {
                 });
                 ttsReady = true;
                 if (ttsPending != null) { String t = ttsPending; ttsPending = null; speak(t); }
-            });
+            };
+            // Il motore vocale di Google e' molto piu' naturale di quello di serie delle autoradio
+            boolean google = false;
+            try { getPackageManager().getPackageInfo("com.google.android.tts", 0); google = true; }
+            catch (Exception ignored) { }
+            tts = google ? new TextToSpeech(getApplicationContext(), init, "com.google.android.tts")
+                    : new TextToSpeech(getApplicationContext(), init);
             return;
         }
         if (!ttsReady) { ttsPending = text; return; }
         AudioManager am = getSystemService(AudioManager.class);
         am.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nav");
+        tts.speak(humanize(text), TextToSpeech.QUEUE_FLUSH, null, "nav");
+    }
+
+    /** Sceglie la voce italiana migliore installata (alta qualita', preferibilmente offline). */
+    private void pickBestVoice() {
+        try {
+            android.speech.tts.Voice best = null;
+            int bestScore = -1;
+            for (android.speech.tts.Voice v : tts.getVoices()) {
+                if (!"ita".equals(v.getLocale().getISO3Language())) continue;
+                int sc = v.getQuality() * 10 - v.getLatency() - (v.isNetworkConnectionRequired() ? 500 : 0);
+                if (sc > bestScore) { bestScore = sc; best = v; }
+            }
+            if (best != null) tts.setVoice(best);
+        } catch (Exception ignored) { }
+    }
+
+    /** Rende il testo piu' fluido da pronunciare: abbreviazioni estese e pause naturali. */
+    private static String humanize(String t) {
+        return t.replace("Arrivo:", "Sei arrivato,")
+                .replaceAll("\\bSP\\s?(\\d+)", "strada provinciale $1")
+                .replaceAll("\\bSS\\s?(\\d+)", "strada statale $1")
+                .replaceAll("\\bSR\\s?(\\d+)", "strada regionale $1")
+                .replaceAll("\\bA(\\d+)\\b", "autostrada A $1")
+                .replace("Tra ", "Fra ")
+                .replace(" su ", ", su ");
     }
 
     private void abandonFocus() {
