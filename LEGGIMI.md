@@ -28,7 +28,7 @@ Senza browser sull'autoradio: scarica l'APK sul telefono e passalo all'autoradio
 - Al primo avvio **consenti la posizione**, così la mappa ti segue.
 - **Tieni premuta un'icona del dock** per scegliere quale app apre (per esempio l'app Bluetooth dell'autoradio per "Telefono"). "Svuota" la libera. Le icone senza app sono attenuate.
 - **Casa / Lavoro**: al primo tocco ti chiede l'indirizzo. Dopo, il tocco avvia la navigazione e la pressione lunga lo modifica.
-- **"Dove vuoi andare?"**: scrivi la destinazione e si apre il navigatore del dock (Maps o Waze) con la rotta già impostata.
+- **"Dove vuoi andare?"**: scrivi o detta la destinazione: il percorso si calcola e la navigazione parte dentro il launcher (frecce, distanza, voce, ricalcolo). Serve internet (hotspot del telefono). Il pulsante a quattro angoli della mappa la porta a schermo intero.
 - **Titolo e copertina del brano**: tocca il riquadro musica e attiva "Mazda Launcher" nell'accesso alle notifiche. Anche senza permesso i tasti ⏮ ⏯ ⏭ funzionano.
 - In "Tutte le app": tocco = apre, pressione lunga = info app.
 

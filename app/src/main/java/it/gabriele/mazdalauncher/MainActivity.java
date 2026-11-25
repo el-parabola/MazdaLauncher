@@ -43,6 +43,8 @@ import android.provider.Settings;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.text.InputType;
 import android.text.format.DateUtils;
 import android.view.KeyEvent;
@@ -151,7 +153,6 @@ public class MainActivity extends Activity {
     private MyLocationNewOverlay myLocation;
     private View routeBar;
     private TextView routeText;
-    private Polyline routeLine;
 
     // musica
     private ImageView mediaArt;
@@ -264,7 +265,7 @@ public class MainActivity extends Activity {
                 .putFloat("map_lon", (float) c.getLongitude())
                 .putFloat("map_zoom", (float) map.getZoomLevelDouble())
                 .apply();
-        if (myLocation != null) myLocation.disableMyLocation();
+        if (myLocation != null && navDest == null) myLocation.disableMyLocation(); // in navigazione il GPS resta attivo
         main.removeCallbacks(frame);
         map.onPause();
     }
@@ -318,6 +319,7 @@ public class MainActivity extends Activity {
         if (sessionsListenerOn) msm.removeOnActiveSessionsChangedListener(sessionsListener);
         setController(null);
         if (recognizer != null) recognizer.destroy();
+        if (tts != null) tts.shutdown();
         map.onDetach();
     }
 
@@ -400,8 +402,26 @@ public class MainActivity extends Activity {
 
             @Override
             public boolean onTouchEvent(android.view.MotionEvent e, MapView mv) {
+                lastTouchAt = SystemClock.uptimeMillis();
                 if (e.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) following = false;
                 return false;
+            }
+        });
+        // bandierina della destinazione
+        map.getOverlays().add(new org.osmdroid.views.overlay.Overlay() {
+            private final Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final Paint ringP = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+            @Override
+            public void draw(Canvas c, MapView mv, boolean shadow) {
+                if (shadow || navDest == null) return;
+                android.graphics.Point pt = mv.getProjection().toPixels(navDest, null);
+                fillP.setColor(0xFFE0304C);
+                ringP.setColor(Color.WHITE);
+                c.drawCircle(pt.x, pt.y, dp(12), ringP);
+                c.drawCircle(pt.x, pt.y, dp(9), fillP);
+                ringP.setColor(Color.WHITE);
+                c.drawCircle(pt.x, pt.y, dp(3), ringP);
             }
         });
 
@@ -421,7 +441,8 @@ public class MainActivity extends Activity {
         findViewById(R.id.btn_voice).setOnClickListener(v -> startVoice());
         routeBar = findViewById(R.id.route_bar);
         routeText = findViewById(R.id.route_text);
-        findViewById(R.id.route_clear).setOnClickListener(v -> clearRoute());
+        findViewById(R.id.route_clear).setOnClickListener(v -> stopNavigation());
+        setupNavUi();
 
     }
 
@@ -464,6 +485,11 @@ public class MainActivity extends Activity {
                 dispLon = fromLon + (toLon - fromLon) * t;
                 float d = ((toBrg - fromBrg + 540f) % 360f) - 180f; // via più breve
                 dispBearing = (fromBrg + d * t + 360f) % 360f;
+                if (navDest != null && route != null) {
+                    // in navigazione: mappa con la direzione di marcia in alto; dopo 12 s dal tocco riprende a seguire
+                    if (!following && SystemClock.uptimeMillis() - lastTouchAt > 12_000) following = true;
+                    if (following) map.setMapOrientation(-dispBearing);
+                }
                 if (following && t < 1f) map.getController().setCenter(new GeoPoint(dispLat, dispLon));
                 map.invalidate();
             }
@@ -473,6 +499,7 @@ public class MainActivity extends Activity {
 
     /** Nuovo fix GPS: parte dalla posizione mostrata e scorre verso la posizione prevista fra 1 s. */
     private void feedFix(Location loc) {
+        navUpdate(loc.getLatitude(), loc.getLongitude(), loc.hasSpeed() ? loc.getSpeed() : 0f);
         double lat = loc.getLatitude(), lon = loc.getLongitude();
         float brg = loc.hasBearing() ? loc.getBearing() : (dispLat == null ? 0f : toBrg);
         if (loc.hasSpeed() && loc.hasBearing() && loc.getSpeed() > 1f) {
@@ -511,7 +538,7 @@ public class MainActivity extends Activity {
 
     private void goToPlace(String key, String label) {
         String addr = prefs.getString("place_" + key, "");
-        if (addr.isEmpty()) editPlace(key, label); else navigateTo(addr);
+        if (addr.isEmpty()) editPlace(key, label); else navigateTo(addr, false);
     }
 
     private void editPlace(String key, String label) {
@@ -552,48 +579,6 @@ public class MainActivity extends Activity {
         });
         dialog.show();
         input.requestFocus();
-    }
-
-    /** Apre il navigatore scelto nel dock con la destinazione. */
-    private void navigateTo(String destination) {
-        addRecent(destination);
-        AppEntry nav = resolveSlot(SLOTS[SLOT_NAV]);
-        String pkg = nav != null ? nav.component.getPackageName() : null;
-        if (MAPS_PKG.equals(pkg)) {
-            // Google Maps capisce il testo da solo
-            sendNav(pkg, Uri.parse("google.navigation:q=" + Uri.encode(destination)));
-            return;
-        }
-        // Altri navigatori (es. Organic Maps): cerca le coordinate e passa un punto geo:
-        GeoPoint me = myLocation == null ? null : myLocation.getMyLocation();
-        Toast.makeText(this, "Cerco \u201c" + destination + "\u201d\u2026", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            Uri uri = null;
-            try {
-                String url = NOMINATIM + Uri.encode(destination);
-                if (me != null) {
-                    url += String.format(Locale.US, "&countrycodes=it&bounded=0&viewbox=%f,%f,%f,%f",
-                            me.getLongitude() - 0.8, me.getLatitude() + 0.6,
-                            me.getLongitude() + 0.8, me.getLatitude() - 0.6);
-                }
-                JSONArray hits = new JSONArray(httpRequest(url, null));
-                if (hits.length() > 0) {
-                    JSONObject h = hits.getJSONObject(0);
-                    String lat = h.getString("lat");
-                    String lon = h.getString("lon");
-                    uri = Uri.parse("geo:" + lat + "," + lon + "?q=" + lat + "," + lon
-                            + "(" + Uri.encode(destination) + ")");
-                }
-            } catch (Exception ignored) { }
-            final Uri found = uri;
-            main.post(() -> {
-                if (found == null) {
-                    Toast.makeText(this, "Indirizzo non trovato: controlla la rete o il nome", Toast.LENGTH_LONG).show();
-                } else {
-                    sendNav(pkg, found);
-                }
-            });
-        }, "geocode").start();
     }
 
     private void sendNav(String pkg, Uri uri) {
@@ -721,7 +706,7 @@ public class MainActivity extends Activity {
             }
             if (best != null) { launch(best); return; }
         }
-        if (t.contains("navigatore") || t.contains("mappa")) { launchSlot(SLOT_NAV); return; }
+        if (t.contains("navigatore") || t.contains("mappa")) { showPage(PAGE_MAP); setExpanded(true); return; }
         if (t.contains("musica") || t.contains("spotify")) { launchSlot(SLOT_MUSIC); return; }
         if (t.contains("radio")) { launchSlot(4); return; }
         if (t.contains("telefono")) { launchSlot(2); return; }
@@ -735,30 +720,447 @@ public class MainActivity extends Activity {
         else Toast.makeText(this, "Nessuna app per " + SLOTS[idx].label, Toast.LENGTH_SHORT).show();
     }
 
-    // ---------- Percorso nel launcher (prototipo online) ----------
-    private static final String NOMINATIM = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=";
-    private static final String VALHALLA = "https://valhalla.openstreetmap.de/route";
+    // ---------- Navigazione integrata (percorso OSRM, istruzioni, voce) ----------
+    private static final String NOMINATIM = "https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=it&q=";
+    // (indirizzo, 1 = usa le radici ISRG aggiunte a mano). Si prova in ordine fino al primo che risponde.
+    private static final String[][] ROUTERS = {
+            {"https://router.project-osrm.org/route/v1/driving/", "0"},
+            {"http://router.project-osrm.org/route/v1/driving/", "0"},
+            {"https://routing.openstreetmap.de/routed-car/route/v1/driving/", "0"},
+            {"https://routing.openstreetmap.de/routed-car/route/v1/driving/", "1"}};
 
-    /** Mostra il motivo nella barra del percorso, senza aprire altre app. */
-    private void showRouteError(String stage, String why) {
+    private static final class Place {
+        final String name;
+        final double lat, lon;
+        Place(String name, double lat, double lon) { this.name = name; this.lat = lat; this.lon = lon; }
+    }
+
+    private Route route;
+    private GeoPoint navDest;
+    private String navName = "";
+    private boolean routing, expanded, voiceOn = true;
+    private int routeIdx, routeStep, offCount, announceStep = -1, announceStage, trimIdx;
+    private long lastRerouteAt, lastTouchAt;
+    private double lastLat, lastLon;
+    private boolean haveFix;
+    private String routeStatus = "";
+    private Uri externalUri;
+    private Polyline routeLine;
+    private TextToSpeech tts;
+    private boolean ttsReady;
+    private String ttsPending;
+    private final AudioManager.OnAudioFocusChangeListener focusListener = c -> { };
+    private final java.util.Map<String, Bitmap> maneuverCache = new java.util.HashMap<>();
+    private View navBanner, navBottom, searchBar;
+    private ImageView navArrow;
+    private TextView navDistText, navInstrText, navSummary;
+
+    private void setupNavUi() {
+        navBanner = findViewById(R.id.nav_banner);
+        navBottom = findViewById(R.id.nav_bottom);
+        searchBar = findViewById(R.id.search);
+        navArrow = findViewById(R.id.nav_arrow);
+        navDistText = findViewById(R.id.nav_dist);
+        navInstrText = findViewById(R.id.nav_instr);
+        navSummary = findViewById(R.id.nav_summary);
+        voiceOn = prefs.getBoolean("nav_voice", true);
+        ImageButton vb = findViewById(R.id.nav_voice);
+        vb.setImageResource(voiceOn ? R.drawable.ic_volume : R.drawable.ic_volume_off);
+        vb.setOnClickListener(v -> {
+            voiceOn = !voiceOn;
+            prefs.edit().putBoolean("nav_voice", voiceOn).apply();
+            vb.setImageResource(voiceOn ? R.drawable.ic_volume : R.drawable.ic_volume_off);
+            if (!voiceOn && tts != null) tts.stop();
+        });
+        findViewById(R.id.nav_stop).setOnClickListener(v -> stopNavigation());
+        findViewById(R.id.btn_expand).setOnClickListener(v -> setExpanded(!expanded));
+        // un tocco sulla barra di errore apre il percorso in un'altra app di navigazione
+        routeText.setOnClickListener(v -> { if (externalUri != null) sendNav(null, externalUri); });
+
+        // riprende un percorso interrotto da poco (es. l'app è stata chiusa dal sistema)
+        double dl = Double.longBitsToDouble(prefs.getLong("nav_lat", 0));
+        double dn = Double.longBitsToDouble(prefs.getLong("nav_lon", 0));
+        long when = prefs.getLong("nav_t", 0);
+        if (when > 0 && System.currentTimeMillis() - when < 2 * 3600_000L && (dl != 0 || dn != 0)) {
+            navDest = new GeoPoint(dl, dn);
+            navName = prefs.getString("nav_name", "");
+            externalUri = Uri.parse("geo:" + dl + "," + dn + "?q=" + dl + "," + dn);
+            routeStatus = "Cerco il segnale GPS…";
+            setExpanded(true);
+        }
+        updateNavUi();
+    }
+
+    /** Mappa a tutto schermo: nasconde schede e pannello musica. */
+    private void setExpanded(boolean on) {
+        expanded = on;
+        findViewById(R.id.media_panel).setVisibility(on ? View.GONE : View.VISIBLE);
+        findViewById(R.id.tabs).setVisibility(on ? View.GONE : View.VISIBLE);
+        ((ImageButton) findViewById(R.id.btn_expand)).setImageResource(
+                on ? R.drawable.ic_fullscreen_exit : R.drawable.ic_fullscreen);
+        map.postDelayed(() -> map.invalidate(), 50);
+    }
+
+    private void updateNavUi() {
+        boolean pending = navDest != null && route == null;
+        boolean active = navDest != null && route != null;
+        searchBar.setVisibility(navDest == null ? View.VISIBLE : View.GONE);
+        routeBar.setVisibility(pending ? View.VISIBLE : View.GONE);
+        navBanner.setVisibility(active ? View.VISIBLE : View.GONE);
+        navBottom.setVisibility(navDest != null ? View.VISIBLE : View.GONE);
+        if (navDest != null) findViewById(R.id.map_street_box).setVisibility(View.GONE);
+        if (pending) {
+            routeText.setText(routeStatus);
+            navSummary.setText(navName.isEmpty() ? "Navigazione" : navName);
+        }
+    }
+
+    // ----- Ricerca destinazione -----
+    private void navigateTo(String destination) { navigateTo(destination, true); }
+
+    /** Cerca l'indirizzo; con più risultati (e choose) fa scegliere, poi avvia la navigazione. */
+    private void navigateTo(String destination, boolean choose) {
+        addRecent(destination);
+        showPage(PAGE_MAP);
+        setExpanded(true);
+        GeoPoint me = haveFix ? new GeoPoint(lastLat, lastLon) : null;
+        Toast.makeText(this, "Cerco “" + destination + "”…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            List<Place> hits = new ArrayList<>();
+            boolean failed = false;
+            try {
+                String url = NOMINATIM + Uri.encode(destination);
+                if (me != null) {
+                    url += String.format(Locale.US, "&countrycodes=it&bounded=0&viewbox=%f,%f,%f,%f",
+                            me.getLongitude() - 0.8, me.getLatitude() + 0.6,
+                            me.getLongitude() + 0.8, me.getLatitude() - 0.6);
+                }
+                JSONArray arr = new JSONArray(httpRequest(url, null));
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject h = arr.getJSONObject(i);
+                    String[] parts = h.optString("display_name", destination).split(", ");
+                    StringBuilder nm = new StringBuilder();
+                    for (int k = 0; k < Math.min(4, parts.length); k++) {
+                        if (k > 0) nm.append(", ");
+                        nm.append(parts[k]);
+                    }
+                    hits.add(new Place(nm.toString(), Double.parseDouble(h.getString("lat")),
+                            Double.parseDouble(h.getString("lon"))));
+                }
+            } catch (Exception e) { failed = true; }
+            final boolean fail = failed;
+            main.post(() -> {
+                if (hits.isEmpty()) {
+                    Toast.makeText(this, fail ? "Nessuna rete: controlla il Wi-Fi o l'hotspot"
+                            : "Indirizzo non trovato", Toast.LENGTH_LONG).show();
+                } else if (hits.size() == 1 || !choose) {
+                    startNavigation(hits.get(0));
+                } else {
+                    String[] names = new String[hits.size()];
+                    for (int i = 0; i < names.length; i++) names[i] = hits.get(i).name;
+                    new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                            .setTitle("Quale intendi?")
+                            .setItems(names, (d, which) -> startNavigation(hits.get(which)))
+                            .setNegativeButton("Annulla", null)
+                            .show();
+                }
+            });
+        }, "geocode").start();
+    }
+
+    private void startNavigation(Place p) {
+        stopNavigation();
+        navDest = new GeoPoint(p.lat, p.lon);
+        navName = p.name;
+        externalUri = Uri.parse("geo:" + p.lat + "," + p.lon + "?q=" + p.lat + "," + p.lon);
+        prefs.edit().putLong("nav_lat", Double.doubleToLongBits(p.lat))
+                .putLong("nav_lon", Double.doubleToLongBits(p.lon))
+                .putString("nav_name", p.name)
+                .putLong("nav_t", System.currentTimeMillis()).apply();
+        showPage(PAGE_MAP);
+        setExpanded(true);
+        following = true;
+        routeStatus = haveFix ? "Calcolo il percorso…" : "Cerco il segnale GPS…";
+        updateNavUi();
+        requestRoute(false);
+    }
+
+    private void stopNavigation() {
+        navDest = null;
+        route = null;
+        routing = false;
+        announceStep = -1;
         if (routeLine != null) {
             map.getOverlays().remove(routeLine);
             routeLine = null;
         }
-        routeText.setText("Percorso non riuscito · " + stage + " · " + why);
-        routeBar.setVisibility(View.VISIBLE);
+        prefs.edit().remove("nav_lat").remove("nav_lon").remove("nav_name").remove("nav_t").apply();
+        if (tts != null) tts.stop();
+        if (map != null) {
+            map.setMapOrientation(0f);
+            map.invalidate();
+        }
+        if (searchBar != null) updateNavUi();
+    }
+
+    // ----- Calcolo del percorso -----
+    private void requestRoute(boolean reroute) {
+        if (navDest == null || routing) return;
+        if (!haveFix) { routeStatus = "Cerco il segnale GPS…"; updateNavUi(); return; }
+        routing = true;
+        lastRerouteAt = SystemClock.elapsedRealtime();
+        if (!reroute) { routeStatus = "Calcolo il percorso…"; updateNavUi(); }
+        final GeoPoint dest = navDest;
+        final double fl = lastLat, fo = lastLon;
+        new Thread(() -> {
+            Route r = null;
+            String err = "";
+            String q = String.format(Locale.US, "%f,%f;%f,%f", fo, fl, dest.getLongitude(), dest.getLatitude())
+                    + "?overview=full&geometries=polyline6&steps=true";
+            for (String[] ep : ROUTERS) {
+                try {
+                    r = Route.parse(httpRequest(ep[0] + q, null, "1".equals(ep[1])));
+                    break;
+                } catch (Exception e) {
+                    err = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    if ("NoRoute".equals(err)) break; // il server risponde: inutile riprovare altrove
+                }
+            }
+            final Route fr = r;
+            final String ferr = err;
+            main.post(() -> {
+                routing = false;
+                if (navDest != dest) return; // destinazione cambiata o navigazione chiusa
+                if (fr != null) applyRoute(fr, reroute);
+                else routeFailed(ferr, reroute);
+            });
+        }, "route").start();
+    }
+
+    private void routeFailed(String why, boolean reroute) {
+        if (reroute && route != null) return; // si tiene il vecchio percorso e si riprova più tardi
+        routeStatus = "NoRoute".equals(why) ? "Nessun percorso trovato per questa destinazione"
+                : "Percorso non riuscito (" + why + "). Controlla Wi-Fi/hotspot. Tocca qui per aprire un altro navigatore";
+        updateNavUi();
+    }
+
+    private void applyRoute(Route r, boolean reroute) {
+        route = r;
+        routeIdx = 0;
+        routeStep = 0;
+        offCount = 0;
+        announceStep = -1;
+        announceStage = 0;
+        trimIdx = 0;
+        if (routeLine != null) map.getOverlays().remove(routeLine);
+        routeLine = new Polyline();
+        routeLine.getOutlinePaint().setColor(0xFFE0304C);
+        routeLine.getOutlinePaint().setStrokeWidth(dp(8));
+        routeLine.getOutlinePaint().setStrokeCap(Paint.Cap.ROUND);
+        routeLine.setPoints(routePoints(0));
+        map.getOverlays().add(0, routeLine);
+        if (!reroute) {
+            following = true;
+            map.getController().setZoom(17.0);
+            speak("Percorso calcolato: " + Route.distSpoken(r.total) + ", circa "
+                    + Math.max(1, Math.round(r.duration / 60.0)) + " minuti.");
+        }
+        updateNavUi();
+        if (haveFix) navUpdate(lastLat, lastLon, 0f);
         map.invalidate();
     }
 
-    /** GET se body è null, altrimenti POST con corpo JSON. */
-    private SSLSocketFactory valhallaSocketFactory;
+    private List<GeoPoint> routePoints(int from) {
+        List<GeoPoint> pts = new ArrayList<>(Math.max(0, route.lat.length - from));
+        for (int i = from; i < route.lat.length; i++) pts.add(new GeoPoint(route.lat[i], route.lon[i]));
+        return pts;
+    }
 
-    /**
-     * Valhalla usa una catena con radici ISRG Root X2 / Root YE, assenti nell'elenco di Android 9.
-     * Le aggiungiamo solo per questo server; la verifica del certificato resta attiva.
-     */
-    private SSLSocketFactory valhallaSockets() throws Exception {
-        if (valhallaSocketFactory == null) {
+    /** Chiamato a ogni fix GPS (thread principale). */
+    private void navUpdate(double lat, double lon, float speed) {
+        lastLat = lat;
+        lastLon = lon;
+        haveFix = true;
+        if (navDest == null) return;
+        if (route == null) {
+            if (!routing) requestRoute(false);
+            return;
+        }
+        Route.Match m = route.match(lat, lon, routeIdx);
+        routeIdx = m.idx;
+        double remaining = route.total - m.s;
+        if (remaining < 30) { arrived(); return; }
+
+        long now = SystemClock.elapsedRealtime();
+        if (m.off > 45) {
+            offCount++;
+            if (offCount >= 3 && !routing && now - lastRerouteAt > 8000) {
+                speak("Ricalcolo del percorso.");
+                requestRoute(true);
+            }
+        } else {
+            offCount = 0;
+        }
+
+        routeStep = route.stepAt(m.s, routeStep);
+        Route.Step cur = route.steps.get(routeStep);
+        Route.Step next = route.steps.get(Math.min(routeStep + 1, route.steps.size() - 1));
+        double dNext = Math.max(0, next.startS - m.s);
+        boolean off = offCount >= 3;
+
+        navDistText.setText(off ? "Ricalcolo…" : Route.distText(dNext));
+        navInstrText.setText(off ? "Fuori percorso" : Route.text(next));
+        navArrow.setImageBitmap(maneuverBitmap(next));
+
+        long secs = Math.round(route.duration * remaining / Math.max(1, route.total));
+        Calendar eta = Calendar.getInstance();
+        eta.add(Calendar.SECOND, (int) secs);
+        navSummary.setText(String.format(Locale.ITALY, "%s · %d min · arrivo %02d:%02d",
+                Route.distText(remaining), Math.max(1, Math.round(secs / 60.0)),
+                eta.get(Calendar.HOUR_OF_DAY), eta.get(Calendar.MINUTE)));
+
+        // annunci vocali: uno da lontano e uno vicino, più larghi se si va veloci
+        if (!off) {
+            if (routeStep != announceStep) { announceStep = routeStep; announceStage = 0; }
+            double far = Math.max(300, speed * 22), near = Math.max(110, speed * 8);
+            double stepLen = next.startS - cur.startS;
+            String say = Route.text(next);
+            say = Character.toLowerCase(say.charAt(0)) + say.substring(1);
+            if (announceStage < 2 && dNext <= near) {
+                announceStage = 2;
+                speak("arrive".equals(next.type) ? Route.text(next) : "Tra " + Route.distSpoken(dNext) + ", " + say);
+            } else if (announceStage < 1 && dNext <= far) {
+                announceStage = 1;
+                if (stepLen >= far + 150 && dNext > near + 60)
+                    speak("Tra " + Route.distSpoken(dNext) + ", " + say);
+            }
+        }
+
+        // accorcia la linea rossa man mano che si avanza (meno punti da disegnare)
+        if (routeLine != null && routeIdx - trimIdx > 30) {
+            trimIdx = routeIdx;
+            routeLine.setPoints(routePoints(trimIdx));
+        }
+    }
+
+    private void arrived() {
+        speak("Sei arrivato a destinazione.");
+        Toast.makeText(this, "Sei arrivato a destinazione", Toast.LENGTH_LONG).show();
+        stopNavigation();
+    }
+
+    // ----- Voce -----
+    private void speak(String text) {
+        if (!voiceOn) return;
+        if (tts == null) {
+            ttsPending = text;
+            tts = new TextToSpeech(getApplicationContext(), status -> {
+                if (status != TextToSpeech.SUCCESS) return;
+                tts.setLanguage(Locale.ITALY);
+                tts.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build());
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String id) { }
+                    @Override public void onDone(String id) { abandonFocus(); }
+                    @Override public void onError(String id) { abandonFocus(); }
+                });
+                ttsReady = true;
+                if (ttsPending != null) { String t = ttsPending; ttsPending = null; speak(t); }
+            });
+            return;
+        }
+        if (!ttsReady) { ttsPending = text; return; }
+        AudioManager am = getSystemService(AudioManager.class);
+        am.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nav");
+    }
+
+    private void abandonFocus() {
+        AudioManager am = getSystemService(AudioManager.class);
+        am.abandonAudioFocus(focusListener);
+    }
+
+    // ----- Icona della manovra -----
+    private Bitmap maneuverBitmap(Route.Step st) {
+        String key = st.type + "|" + st.modifier;
+        Bitmap b = maneuverCache.get(key);
+        if (b != null) return b;
+        int s = dp(64);
+        b = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        line.setColor(Color.WHITE);
+        line.setStyle(Paint.Style.STROKE);
+        line.setStrokeWidth(dp(7));
+        line.setStrokeCap(Paint.Cap.ROUND);
+        line.setStrokeJoin(Paint.Join.ROUND);
+        Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        fill.setColor(Color.WHITE);
+        if ("arrive".equals(st.type)) {
+            fill.setColor(0xFFE0304C);
+            c.drawCircle(s / 2f, s / 2f, s * 0.26f, fill);
+            line.setStrokeWidth(dp(4));
+            c.drawCircle(s / 2f, s / 2f, s * 0.26f, line);
+        } else if ("uturn".equals(st.modifier)) {
+            Path p = new Path();
+            p.moveTo(s * 0.68f, s * 0.92f);
+            p.lineTo(s * 0.68f, s * 0.38f);
+            p.arcTo(new android.graphics.RectF(s * 0.32f, s * 0.12f, s * 0.68f, s * 0.64f), 0, -180);
+            p.lineTo(s * 0.32f, s * 0.5f);
+            c.drawPath(p, line);
+            drawHead(c, fill, s * 0.32f, s * 0.5f, 0, 1, dp(13));
+        } else {
+            double a;
+            switch (st.modifier) {
+                case "right": a = 90; break;
+                case "left": a = -90; break;
+                case "slight right": a = 45; break;
+                case "slight left": a = -45; break;
+                case "sharp right": a = 135; break;
+                case "sharp left": a = -135; break;
+                default: a = 0;
+            }
+            float ex, ey;
+            Path p = new Path();
+            p.moveTo(s * 0.5f, s * 0.92f);
+            if (a == 0) {
+                ex = s * 0.5f;
+                ey = s * 0.2f;
+                p.lineTo(ex, ey);
+            } else {
+                p.lineTo(s * 0.5f, s * 0.52f);
+                ex = (float) (s * 0.5f + Math.sin(Math.toRadians(a)) * s * 0.34f);
+                ey = (float) (s * 0.52f - Math.cos(Math.toRadians(a)) * s * 0.34f);
+                p.lineTo(ex, ey);
+            }
+            c.drawPath(p, line);
+            float dx = a == 0 ? 0 : (float) Math.sin(Math.toRadians(a));
+            float dy = a == 0 ? -1 : (float) -Math.cos(Math.toRadians(a));
+            drawHead(c, fill, ex, ey, dx, dy, dp(13));
+        }
+        maneuverCache.put(key, b);
+        return b;
+    }
+
+    /** Punta di freccia nel punto (x,y), diretta come (dx,dy). */
+    private static void drawHead(Canvas c, Paint fill, float x, float y, float dx, float dy, float h) {
+        float px = -dy, py = dx;
+        Path t = new Path();
+        t.moveTo(x + dx * h, y + dy * h);
+        t.lineTo(x + px * h * 0.85f, y + py * h * 0.85f);
+        t.lineTo(x - px * h * 0.85f, y - py * h * 0.85f);
+        t.close();
+        c.drawPath(t, fill);
+    }
+
+    // ----- Rete -----
+    private SSLSocketFactory extraRootsFactory;
+
+    /** Radici ISRG X2 / Root YE assenti in Android 9: usate solo per i server che ne hanno bisogno. */
+    private SSLSocketFactory extraRoots() throws Exception {
+        if (extraRootsFactory == null) {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
             ks.load(null, null);
@@ -768,9 +1170,9 @@ public class MainActivity extends Activity {
             tmf.init(ks);
             SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(null, tmf.getTrustManagers(), null);
-            valhallaSocketFactory = ctx.getSocketFactory();
+            extraRootsFactory = ctx.getSocketFactory();
         }
-        return valhallaSocketFactory;
+        return extraRootsFactory;
     }
 
     private java.security.cert.Certificate loadCert(CertificateFactory cf, int resId) throws Exception {
@@ -780,13 +1182,18 @@ public class MainActivity extends Activity {
     }
 
     private String httpRequest(String url, String body) throws Exception {
+        return httpRequest(url, body, false);
+    }
+
+    /** GET se body è null, altrimenti POST con corpo JSON. */
+    private String httpRequest(String url, String body, boolean extra) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        if (url.startsWith(VALHALLA) && c instanceof HttpsURLConnection) {
-            ((HttpsURLConnection) c).setSSLSocketFactory(valhallaSockets());
+        if (extra && c instanceof HttpsURLConnection) {
+            ((HttpsURLConnection) c).setSSLSocketFactory(extraRoots());
         }
         c.setConnectTimeout(8000);
         c.setReadTimeout(12000);
-        c.setRequestProperty("User-Agent", "MazdaLauncher/2.5");
+        c.setRequestProperty("User-Agent", "MazdaLauncher/2.16");
         c.setRequestProperty("Accept-Language", "it");
         if (body != null) {
             c.setRequestMethod("POST");
@@ -796,7 +1203,7 @@ public class MainActivity extends Activity {
                 os.write(body.getBytes(StandardCharsets.UTF_8));
             }
         }
-        // Valhalla risponde con errori HTTP 400 che hanno comunque un JSON utile
+        // i server rispondono con errori HTTP 400 che hanno comunque un JSON utile
         InputStream in = c.getResponseCode() >= 400 ? c.getErrorStream() : c.getInputStream();
         try (InputStream src = in) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -807,56 +1214,6 @@ public class MainActivity extends Activity {
         } finally {
             c.disconnect();
         }
-    }
-
-    /** Decodifica una polilinea Google/Valhalla a precisione 6 (1e-6 gradi). */
-    private static List<GeoPoint> decodePolyline(String enc) {
-        List<GeoPoint> out = new ArrayList<>();
-        int index = 0, lat = 0, lng = 0;
-        while (index < enc.length()) {
-            int b, shift = 0, result = 0;
-            do {
-                b = enc.charAt(index++) - 63;
-                result |= (b & 0x1f) << shift;
-                shift += 5;
-            } while (b >= 0x20);
-            lat += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-            shift = 0;
-            result = 0;
-            do {
-                b = enc.charAt(index++) - 63;
-                result |= (b & 0x1f) << shift;
-                shift += 5;
-            } while (b >= 0x20);
-            lng += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-            out.add(new GeoPoint(lat / 1e6, lng / 1e6));
-        }
-        return out;
-    }
-
-    private void showRoute(List<GeoPoint> pts, double meters, double secs, String dest) {
-        if (routeLine != null) map.getOverlays().remove(routeLine);
-        routeLine = new Polyline();
-        routeLine.setPoints(pts);
-        routeLine.getOutlinePaint().setColor(0xFFB3112E);
-        routeLine.getOutlinePaint().setStrokeWidth(dp(7));
-        map.getOverlays().add(0, routeLine);
-
-        String km = String.format(Locale.ITALY, "%.1f km", meters / 1000.0);
-        long min = Math.max(1, Math.round(secs / 60.0));
-        routeText.setText(dest + " · " + km + " · " + min + " min");
-        routeBar.setVisibility(View.VISIBLE);
-        map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts), true, dp(60));
-        map.invalidate();
-    }
-
-    private void clearRoute() {
-        if (routeLine != null) {
-            map.getOverlays().remove(routeLine);
-            routeLine = null;
-        }
-        routeBar.setVisibility(View.GONE);
-        map.invalidate();
     }
 
     private EditText makeInput(String hint) {
@@ -972,6 +1329,11 @@ public class MainActivity extends Activity {
     }
 
     private void onDockClick(int idx) {
+        if (idx == SLOT_NAV) { // il navigatore è la mappa del launcher
+            showPage(PAGE_MAP);
+            setExpanded(true);
+            return;
+        }
         AppEntry e = resolveSlot(SLOTS[idx]);
         if (e != null) launch(e); else pickApp(idx);
     }
@@ -1411,7 +1773,7 @@ public class MainActivity extends Activity {
         parkWalk = findViewById(R.id.park_walk);
         parkGo = findViewById(R.id.park_go);
         View save = findViewById(R.id.park_save);
-        setCard(parkGo, R.drawable.ic_nav, "Portami all'auto", "Apre il navigatore");
+        setCard(parkGo, R.drawable.ic_nav, "Portami all'auto", "Percorso nel launcher");
         setCard(save, R.drawable.ic_pin, "Salva qui", "Posizione attuale");
         View share = findViewById(R.id.park_share);
         setCard(share, R.drawable.ic_share, "QR telefono", "Posizione auto");
@@ -1491,11 +1853,7 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Prima salva dove hai parcheggiato", Toast.LENGTH_SHORT).show();
             return;
         }
-        AppEntry nav = resolveSlot(SLOTS[SLOT_NAV]);
-        String pkg = nav != null ? nav.component.getPackageName() : null;
-        String ll = parkLat() + "," + parkLon();
-        if (MAPS_PKG.equals(pkg)) sendNav(pkg, Uri.parse("google.navigation:q=" + ll + "&mode=w"));
-        else sendNav(pkg, Uri.parse("geo:" + ll + "?q=" + ll + "(Auto)"));
+        startNavigation(new Place("La tua auto", parkLat(), parkLon()));
     }
 
     private static String whenText(long t) {
@@ -1564,7 +1922,7 @@ public class MainActivity extends Activity {
             ((TextView) findViewById(R.id.map_street)).setText(road != null ? road : city);
             ((TextView) findViewById(R.id.map_city)).setText(road != null && city != null ? city : "");
             findViewById(R.id.map_city).setVisibility(road != null && city != null ? View.VISIBLE : View.GONE);
-            findViewById(R.id.map_street_box).setVisibility(View.VISIBLE);
+            findViewById(R.id.map_street_box).setVisibility(navDest == null ? View.VISIBLE : View.GONE);
         });
     }
 
