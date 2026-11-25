@@ -153,4 +153,40 @@
             android:textColor="@color/text_dim"
             android:textSize="14sp" />
     </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/mic_test"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/chip_bg"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:minHeight="56dp"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <TextView
+            android:id="@+id/mic_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="2"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:textColor="@color/text"
+            android:textSize="15sp" />
+
+        <ProgressBar
+            android:id="@+id/mic_level"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="140dp"
+            android:layout_height="6dp"
+            android:layout_marginStart="12dp"
+            android:max="100"
+            android:progressBackgroundTint="#40FFFFFF"
+            android:progressTint="@color/mazda_red" />
+    </LinearLayout>
 </LinearLayout>
