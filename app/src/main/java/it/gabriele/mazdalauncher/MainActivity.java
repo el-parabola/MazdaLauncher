@@ -127,6 +127,7 @@ public class MainActivity extends Activity {
     private static final int REQ_LOCATION = 1;
     private static final int REQ_VOICE = 2;
     private static final int REQ_AUDIO = 3;
+    private static final int REQ_MICTEST = 4;
     private SpeechRecognizer recognizer;
 
     static final class AppEntry {
@@ -259,6 +260,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         main.removeCallbacks(progressTicker);
+        if (micTest != null) micTest.cancel();
         IGeoPoint c = map.getMapCenter();
         prefs.edit()
                 .putFloat("map_lat", (float) c.getLatitude())
@@ -316,6 +318,7 @@ public class MainActivity extends Activity {
         try { unregisterReceiver(packageReceiver); } catch (Exception ignored) { }
         try { unregisterReceiver(screenReceiver); } catch (Exception ignored) { }
         if (obd != null) obd.stop();
+        if (micTest != null) micTest.cancel();
         if (sessionsListenerOn) msm.removeOnActiveSessionsChangedListener(sessionsListener);
         setController(null);
         if (recognizer != null) recognizer.destroy();
@@ -328,6 +331,8 @@ public class MainActivity extends Activity {
         if (requestCode == REQ_LOCATION && hasLocationPermission()) startLocation();
         if (requestCode == REQ_AUDIO && results.length > 0
                 && results[0] == PackageManager.PERMISSION_GRANTED) startInAppRecognition();
+        if (requestCode == REQ_MICTEST && results.length > 0
+                && results[0] == PackageManager.PERMISSION_GRANTED) startMicTest();
     }
 
     // ---------- Mappa ----------
@@ -1959,10 +1964,57 @@ public class MainActivity extends Activity {
             obdTripAvg.setText("");
             return true;
         });
+        setupMicTest();
         clearGauges();
         obdStatus.setText(prefs.getString("obd_mac", "").isEmpty() ? "Nessun dongle" : "Non collegato");
         obdTripText.setText(prefs.getString("obd_mac", "").isEmpty()
                 ? "Tocca qui per scegliere il dongle OBD2" : "Tocca per cambiare dongle · pressione lunga = azzera viaggio");
+    }
+
+    // ---------- Test microfono ----------
+    private MicTest micTest;
+    private TextView micText;
+    private ProgressBar micLevel;
+    private boolean micCommSource; // false = MIC, true = VOICE_COMMUNICATION (con eliminazione eco/rumore)
+
+    private void setupMicTest() {
+        micText = findViewById(R.id.mic_text);
+        micLevel = findViewById(R.id.mic_level);
+        View box = findViewById(R.id.mic_test);
+        showMicIdle();
+        box.setOnClickListener(v -> {
+            if (micTest != null && micTest.isRunning()) { micTest.cancel(); return; }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MICTEST);
+                return;
+            }
+            startMicTest();
+        });
+        box.setOnLongClickListener(v -> {
+            if (micTest != null && micTest.isRunning()) return true;
+            micCommSource = !micCommSource;
+            showMicIdle();
+            return true;
+        });
+    }
+
+    private void showMicIdle() {
+        micText.setText("Test microfono: tocca, parla 5 s e riascolta · sorgente "
+                + (micCommSource ? "chiamata (filtrata)" : "normale")
+                + " (pressione lunga = cambia)");
+        micLevel.setProgress(0);
+    }
+
+    private void startMicTest() {
+        if (micTest != null && micTest.isRunning()) return;
+        micTest = new MicTest(main, new MicTest.Listener() {
+            @Override public void onLevel(int percent) { micLevel.setProgress(percent); }
+            @Override public void onStatus(String text) { micText.setText(text); }
+            @Override public void onFinished() { micLevel.setProgress(0); }
+        });
+        micTest.start(micCommSource
+                ? android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                : android.media.MediaRecorder.AudioSource.MIC);
     }
 
     private void clearGauges() {
