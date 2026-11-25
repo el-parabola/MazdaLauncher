@@ -1368,11 +1368,59 @@ public class MainActivity extends Activity {
         });
     }
 
+    private static char letterOf(String label) {
+        char c = label.isEmpty() ? '#' : Character.toUpperCase(label.charAt(0));
+        return Character.isLetter(c) ? c : '#';
+    }
+
+    /** Indice A-Z: una lettera per ogni iniziale presente tra le app. */
+    private void buildLetterRail() {
+        final LinearLayout rail = findViewById(R.id.letter_rail);
+        rail.removeAllViews();
+        final List<Character> letters = new ArrayList<>();
+        final List<Integer> firstPos = new ArrayList<>();
+        for (int i = 0; i < apps.size(); i++) {
+            char c = letterOf(apps.get(i).label);
+            if (letters.isEmpty() || letters.get(letters.size() - 1) != c) {
+                letters.add(c);
+                firstPos.add(i);
+            }
+        }
+        for (char c : letters) {
+            TextView t = new TextView(this);
+            t.setText(String.valueOf(c));
+            t.setGravity(android.view.Gravity.CENTER);
+            t.setTextSize(15);
+            t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            t.setTextColor(getResources().getColor(R.color.text_dim));
+            rail.addView(t, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        }
+        rail.setOnTouchListener((v, ev) -> {
+            if (letters.isEmpty()) return true;
+            int n = letters.size();
+            int idx = (int) (ev.getY() / Math.max(1, rail.getHeight()) * n);
+            idx = Math.max(0, Math.min(n - 1, idx));
+            if (ev.getActionMasked() == android.view.MotionEvent.ACTION_UP
+                    || ev.getActionMasked() == android.view.MotionEvent.ACTION_CANCEL) {
+                for (int i = 0; i < n; i++) ((TextView) rail.getChildAt(i))
+                        .setTextColor(getResources().getColor(R.color.text_dim));
+                return true;
+            }
+            for (int i = 0; i < n; i++) ((TextView) rail.getChildAt(i)).setTextColor(
+                    i == idx ? getResources().getColor(R.color.mazda_red)
+                             : getResources().getColor(R.color.text_dim));
+            grid.setSelection(firstPos.get(idx));
+            return true;
+        });
+    }
+
     private void showDrawer() {
         if (gridAdapter == null) {
             gridAdapter = new AppAdapter(apps, R.layout.item_app);
             grid.setAdapter(gridAdapter);
         }
+        buildLetterRail();
         grid.setSelection(0);
         drawer.setVisibility(View.VISIBLE);
     }

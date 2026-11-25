@@ -9,8 +9,8 @@
 
     <ImageView
         android:id="@+id/app_icon"
-        android:layout_width="72dp"
-        android:layout_height="72dp" />
+        android:layout_width="88dp"
+        android:layout_height="88dp" />
 
     <TextView
         android:id="@+id/app_label"
@@ -21,5 +21,5 @@
         android:gravity="center"
         android:maxLines="2"
         android:textColor="@color/text"
-        android:textSize="16sp" />
+        android:textSize="19sp" />
 </LinearLayout>
