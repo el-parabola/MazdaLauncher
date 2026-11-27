@@ -58,6 +58,7 @@ import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.SeekBar;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -214,6 +215,7 @@ public class MainActivity extends Activity {
         setupMap();
         setupMedia();
         setupDrawer();
+        setupSysPanel();
         setupPages();
 
         loadApps();
@@ -249,6 +251,8 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         map.onResume();
+        applySavedBrightness();
+        if (sysPanel.getVisibility() == View.VISIBLE) refreshSysPanel();
         if (hasLocationPermission()) startLocation();
         refreshSessions(); // anche al ritorno dalle impostazioni dei permessi
         ensureObd();
@@ -288,6 +292,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        hideSysPanel();
         hideDrawer(); // tasto Home: torna alla schermata principale
     }
 
@@ -308,7 +313,8 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (drawer.getVisibility() == View.VISIBLE) hideDrawer();
+        if (sysPanel.getVisibility() == View.VISIBLE) hideSysPanel();
+        else if (drawer.getVisibility() == View.VISIBLE) hideDrawer();
         // altrimenti niente: siamo il launcher
     }
 
@@ -317,6 +323,7 @@ public class MainActivity extends Activity {
         super.onDestroy();
         try { unregisterReceiver(packageReceiver); } catch (Exception ignored) { }
         try { unregisterReceiver(screenReceiver); } catch (Exception ignored) { }
+        try { unregisterReceiver(volumeReceiver); } catch (Exception ignored) { }
         if (obd != null) obd.stop();
         if (micTest != null) micTest.cancel();
         if (sessionsListenerOn) msm.removeOnActiveSessionsChangedListener(sessionsListener);
@@ -1315,6 +1322,169 @@ public class MainActivity extends Activity {
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.fromParts("package", pkg, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try { startActivity(i); } catch (Exception ignored) { }
+    }
+
+    // ---------- Volume e luminosità (pannello nel tema del launcher) ----------
+    private View sysPanel;
+    private SeekBar sysSeek;
+    private TextView sysTitle, sysValue, sysHint;
+    private ImageButton sysMute;
+    private boolean sysBright; // false = volume
+    private boolean sysUpdating;
+    private AudioManager audio;
+    private boolean volumeReceiverOn;
+
+    private final BroadcastReceiver volumeReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            if (sysPanel.getVisibility() == View.VISIBLE && !sysBright) refreshSysPanel();
+        }
+    };
+
+    private void setupSysPanel() {
+        audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        sysPanel = findViewById(R.id.sys_panel);
+        sysSeek = findViewById(R.id.sys_seek);
+        sysTitle = findViewById(R.id.sys_title);
+        sysValue = findViewById(R.id.sys_value);
+        sysHint = findViewById(R.id.sys_hint);
+        sysMute = findViewById(R.id.sys_mute);
+
+        findViewById(R.id.btn_sys_volume).setOnClickListener(v -> showSysPanel(false));
+        findViewById(R.id.btn_sys_bright).setOnClickListener(v -> showSysPanel(true));
+        findViewById(R.id.sys_close).setOnClickListener(v -> hideSysPanel());
+        sysPanel.setOnClickListener(v -> hideSysPanel()); // tocco fuori dal pannello
+        findViewById(R.id.sys_minus).setOnClickListener(v -> sysStep(-1));
+        findViewById(R.id.sys_plus).setOnClickListener(v -> sysStep(1));
+        sysMute.setOnClickListener(v -> {
+            if (sysBright) { // luminosità: scorciatoia minimo / massimo
+                setBrightness(getBrightness() > 128 ? 20 : 255);
+            } else {
+                int cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+                if (cur > 0) {
+                    prefs.edit().putInt("vol_before_mute", cur).apply();
+                    setVolume(0);
+                } else {
+                    int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                    setVolume(prefs.getInt("vol_before_mute", max / 2));
+                }
+            }
+            refreshSysPanel();
+        });
+        sysHint.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                Toast.makeText(this, "Impostazione non disponibile su questa unità",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+        sysSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                if (!fromUser || sysUpdating) return;
+                if (sysBright) setBrightness(Math.max(10, p * 255 / 100));
+                else setVolume(p);
+                updateSysLabels();
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) { }
+        });
+    }
+
+    private void showSysPanel(boolean bright) {
+        sysBright = bright;
+        sysTitle.setText(bright ? "Luminosità" : "Volume");
+        sysHint.setVisibility(bright && !canWriteSettings() ? View.VISIBLE : View.GONE);
+        if (!bright && !volumeReceiverOn) {
+            registerReceiver(volumeReceiver, new IntentFilter("android.media.VOLUME_CHANGED_ACTION"));
+            volumeReceiverOn = true;
+        }
+        refreshSysPanel();
+        sysPanel.setVisibility(View.VISIBLE);
+    }
+
+    private void hideSysPanel() {
+        if (sysPanel == null) return;
+        sysPanel.setVisibility(View.GONE);
+        if (volumeReceiverOn) {
+            try { unregisterReceiver(volumeReceiver); } catch (Exception ignored) { }
+            volumeReceiverOn = false;
+        }
+    }
+
+    private void refreshSysPanel() {
+        sysHint.setVisibility(sysBright && !canWriteSettings() ? View.VISIBLE : View.GONE);
+        sysUpdating = true;
+        if (sysBright) {
+            sysSeek.setMax(100);
+            sysSeek.setProgress(getBrightness() * 100 / 255);
+            sysMute.setImageResource(R.drawable.ic_brightness);
+        } else {
+            sysSeek.setMax(audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+            sysSeek.setProgress(audio.getStreamVolume(AudioManager.STREAM_MUSIC));
+            sysMute.setImageResource(sysSeek.getProgress() == 0
+                    ? R.drawable.ic_volume_off : R.drawable.ic_volume);
+        }
+        sysUpdating = false;
+        updateSysLabels();
+    }
+
+    private void updateSysLabels() {
+        int p = sysSeek.getProgress(), max = sysSeek.getMax();
+        sysValue.setText(max == 0 ? "" : (p * 100 / max) + "%");
+        if (!sysBright) {
+            sysMute.setImageResource(p == 0 ? R.drawable.ic_volume_off : R.drawable.ic_volume);
+        }
+    }
+
+    private void sysStep(int dir) {
+        int max = sysSeek.getMax();
+        int step = sysBright ? 10 : 1;
+        int p = Math.max(0, Math.min(max, sysSeek.getProgress() + dir * step));
+        if (sysBright) setBrightness(Math.max(10, p * 255 / 100));
+        else setVolume(p);
+        refreshSysPanel();
+    }
+
+    private void setVolume(int v) {
+        try { audio.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0); } catch (Exception ignored) { }
+    }
+
+    private boolean canWriteSettings() {
+        return Settings.System.canWrite(this);
+    }
+
+    private int getBrightness() {
+        int saved = prefs.getInt("bright", -1);
+        if (saved >= 0 && !canWriteSettings()) return saved;
+        try { return Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS); }
+        catch (Exception e) { return saved >= 0 ? saved : 200; }
+    }
+
+    /** Sempre sulla finestra del launcher; sul sistema solo se il permesso è stato concesso. */
+    private void setBrightness(int v) {
+        v = Math.max(10, Math.min(255, v));
+        prefs.edit().putInt("bright", v).apply();
+        applyWindowBrightness(v);
+        if (canWriteSettings()) {
+            try {
+                Settings.System.putInt(getContentResolver(),
+                        Settings.System.SCREEN_BRIGHTNESS_MODE,
+                        Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+                Settings.System.putInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, v);
+            } catch (Exception ignored) { }
+        }
+    }
+
+    private void applyWindowBrightness(int v) {
+        android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = v / 255f;
+        getWindow().setAttributes(lp);
+    }
+
+    private void applySavedBrightness() {
+        int saved = prefs.getInt("bright", -1);
+        if (saved >= 0) applyWindowBrightness(saved);
     }
 
     // ---------- Dock ----------
