@@ -495,7 +495,7 @@ public class MainActivity extends Activity {
                     if (!following && SystemClock.uptimeMillis() - lastTouchAt > 12_000) following = true;
                     if (following) map.setMapOrientation(-dispBearing);
                 }
-                if (following && t < 1f) map.getController().setCenter(new GeoPoint(dispLat, dispLon));
+                if (following) map.getController().setCenter(new GeoPoint(dispLat, dispLon));
                 map.invalidate();
             }
             main.postDelayed(this, 33); // ~30 fps, leggero per la GPU
@@ -507,16 +507,12 @@ public class MainActivity extends Activity {
         navUpdate(loc.getLatitude(), loc.getLongitude(), loc.hasSpeed() ? loc.getSpeed() : 0f);
         double lat = loc.getLatitude(), lon = loc.getLongitude();
         float brg = loc.hasBearing() ? loc.getBearing() : (dispLat == null ? 0f : toBrg);
-        if (loc.hasSpeed() && loc.hasBearing() && loc.getSpeed() > 1f) {
-            double dist = loc.getSpeed() * 0.5; // anticipo di mezzo secondo: meno errore in curva
-            double r = Math.toRadians(brg);
-            lat += Math.toDegrees(dist * Math.cos(r) / 6371000.0);
-            lon += Math.toDegrees(dist * Math.sin(r) / (6371000.0 * Math.cos(Math.toRadians(lat))));
-        }
-        if (dispLat == null) { dispLat = lat; dispLon = lon; dispBearing = brg; }
-        fromLat = dispLat; fromLon = dispLon; fromBrg = dispBearing;
-        toLat = lat; toLon = lon; toBrg = brg;
-        animStart = SystemClock.uptimeMillis();
+        // tempo reale: nessun anticipo e nessuna interpolazione, la freccia salta subito sul fix
+        fromLat = toLat = lat; fromLon = toLon = lon; fromBrg = toBrg = brg;
+        animStart = 0; // t = 1 subito
+        dispLat = lat; dispLon = lon; dispBearing = brg;
+        main.removeCallbacks(frame);
+        frame.run(); // aggiorna orientamento, centro e ridisegna immediatamente
     }
 
     /** Freccia rossa con bordo bianco per la posizione. */
