@@ -196,6 +196,8 @@ public class MainActivity extends Activity {
     };
 
     // ---------- Ciclo di vita ----------
+    private WifiHelper wifi;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -217,6 +219,8 @@ public class MainActivity extends Activity {
         setupDrawer();
         setupSysPanel();
         setupPages();
+
+        wifi = new WifiHelper(this, prefs);
 
         loadApps();
         buildDock();
@@ -256,6 +260,7 @@ public class MainActivity extends Activity {
         if (hasLocationPermission()) startLocation();
         refreshSessions(); // anche al ritorno dalle impostazioni dei permessi
         ensureObd();
+        if (hasLocationPermission()) wifi.kick();
         main.removeCallbacks(progressTicker);
         main.post(progressTicker);
     }
@@ -263,6 +268,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        wifi.stop();
         main.removeCallbacks(progressTicker);
         if (micTest != null) micTest.cancel();
         IGeoPoint c = map.getMapCenter();
@@ -335,7 +341,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
-        if (requestCode == REQ_LOCATION && hasLocationPermission()) startLocation();
+        if (requestCode == REQ_LOCATION && hasLocationPermission()) { startLocation(); wifi.kick(); }
         if (requestCode == REQ_AUDIO && results.length > 0
                 && results[0] == PackageManager.PERMISSION_GRANTED) startInAppRecognition();
         if (requestCode == REQ_MICTEST && results.length > 0
