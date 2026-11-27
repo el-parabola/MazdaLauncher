@@ -800,7 +800,6 @@ public class MainActivity extends Activity {
     private void setExpanded(boolean on) {
         expanded = on;
         findViewById(R.id.media_panel).setVisibility(on ? View.GONE : View.VISIBLE);
-        findViewById(R.id.tabs).setVisibility(on ? View.GONE : View.VISIBLE);
         ((ImageButton) findViewById(R.id.btn_expand)).setImageResource(
                 on ? R.drawable.ic_fullscreen_exit : R.drawable.ic_fullscreen);
         map.postDelayed(() -> map.invalidate(), 50);
@@ -1686,24 +1685,25 @@ public class MainActivity extends Activity {
     private static final String[] PAGE_TITLES = {"Destinazioni", "Parcheggio", "Auto", "Scadenze", "Mappa"};
     private static final int PAGE_PARK = 1, PAGE_MAP = 4;
     private View[] pageViews;
-    private TextView[] tabViews;
+    private View[] tabViews;
     private int currentPage = 0;
 
     private void setupPages() {
         pageViews = new View[]{findViewById(R.id.page_places), findViewById(R.id.page_park),
                 findViewById(R.id.page_obd), findViewById(R.id.page_service), findViewById(R.id.page_map)};
         LinearLayout tabs = findViewById(R.id.tabs);
-        tabViews = new TextView[PAGE_TITLES.length];
+        LayoutInflater inf = getLayoutInflater();
+        int[] tabIcons = {R.drawable.ic_star, R.drawable.ic_tab_park, R.drawable.ic_tab_obd,
+                R.drawable.ic_tab_service, R.drawable.ic_tab_map};
+        tabViews = new View[PAGE_TITLES.length];
         for (int i = 0; i < PAGE_TITLES.length; i++) {
-            TextView t = new TextView(this);
-            t.setText(PAGE_TITLES[i]);
-            t.setGravity(android.view.Gravity.CENTER);
-            t.setTextSize(15);
-            t.setSingleLine(true);
-            t.setClickable(true);
+            View t = inf.inflate(R.layout.dock_item, tabs, false);
+            ImageView icon = t.findViewById(R.id.dock_icon);
+            icon.setImageResource(tabIcons[i]);
+            t.setContentDescription(PAGE_TITLES[i]);
             final int idx = i;
-            t.setOnClickListener(v -> showPage(idx));
-            tabs.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            t.setOnClickListener(v -> { showPage(idx); if (expanded) setExpanded(false); });
+            tabs.addView(t);
             tabViews[i] = t;
         }
         setupPlacesPage();
@@ -1717,8 +1717,8 @@ public class MainActivity extends Activity {
         currentPage = idx;
         for (int i = 0; i < pageViews.length; i++) {
             pageViews[i].setVisibility(i == idx ? View.VISIBLE : View.GONE);
-            tabViews[i].setTextColor(i == idx ? 0xFFECEFF1 : 0xFF9AA0A6);
-            tabViews[i].setBackgroundResource(i == idx ? R.drawable.tab_sel : 0);
+            tabViews[i].setBackgroundResource(i == idx ? R.drawable.tab_sel : R.drawable.dock_item_bg);
+            tabViews[i].setAlpha(i == idx ? 1f : 0.65f);
         }
         prefs.edit().putInt("page", idx).apply();
         if (idx == PAGE_PARK) updateParkUi();
